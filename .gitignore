@@ -1,0 +1,54 @@
+# Binaries
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output
+*.out
+
+# Go workspace
+go.work
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.*
+
+# Config with secrets
+configs/vine.local.yaml
+configs/leaf.local.yaml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated protobuf (regenerate with: make proto-gen)
+# Kept in tree so contributors without buf can still build
+
+# Build output
+/dist/
+
+# Docker
+deploy/docker/*.tar
+
+# Logs
+*.log
+
+.pi
+.pi-lens
+REVIEW.md
+PRD.md
+TASKS.md

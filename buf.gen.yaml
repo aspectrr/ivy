@@ -1,0 +1,13 @@
+version: v2
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: github.com/aspectrr/ivy/internal/ivyv1
+plugins:
+  - remote: buf.build/protocolbuffers/go
+    out: internal/ivyv1
+    opt: paths=source_relative
+  - remote: buf.build/grpc/go
+    out: internal/ivyv1
+    opt: paths=source_relative

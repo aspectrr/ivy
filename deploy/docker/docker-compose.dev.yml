@@ -1,0 +1,23 @@
+# Dev environment: PostgreSQL with pgvector
+# Usage: docker compose -f deploy/docker/docker-compose.dev.yml up -d
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: ivy-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ivy
+      POSTGRES_USER: ivy
+      POSTGRES_PASSWORD: ivy
+    volumes:
+      - ivy-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ivy"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  ivy-pgdata:

@@ -1,0 +1,97 @@
+# GoReleaser configuration for Ivy
+# https://goreleaser.com
+
+version: 2
+
+project_name: ivy
+
+before:
+  hooks:
+    - go mod tidy
+    - buf generate
+
+builds:
+  - id: vine
+    main: ./cmd/vine
+    binary: vine
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+  - id: leaf
+    main: ./cmd/leaf
+    binary: leaf
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "arm64" }}aarch64
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - configs/vine.yaml
+      - configs/leaf.yaml
+      - migrations/*
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ .Tag }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "merge conflict"
+
+release:
+  github:
+    owner: aspectrr
+    name: ivy
+
+brews:
+  - name: ivy
+    repository:
+      owner: aspectrr
+      name: homebrew-tap
+    directory: Formula
+    homepage: "https://github.com/aspectrr/ivy"
+    description: "Managed data engineering agents"
+    install: |
+      bin.install "vine"
+      bin.install "leaf"
+    test: |
+      system "#{bin}/vine", "--help"

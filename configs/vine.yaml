@@ -1,0 +1,40 @@
+# vine — Main daemon configuration
+
+server:
+  grpc_port: 50051
+  http_port: 8080
+  grpc_tls:
+    cert: ""
+    key: ""
+    ca: ""
+
+database:
+  host: localhost
+  port: 5432
+  name: ivy
+  user: ivy
+  password: "" # Set via IVY_DB_PASSWORD env var
+  sslmode: disable
+
+llm:
+  endpoint: "https://api.openai.com/v1"
+  api_key: "" # Set via IVY_LLM_API_KEY env var
+  default_model: "gpt-4o"
+  embedding_model: "text-embedding-ada-002"
+
+sandbox:
+  docker_host: "unix:///var/run/docker.sock"
+  agent_image: "ivy-agent-sandbox:latest"
+  pipeline_image: "ivy-pipeline-sandbox:latest"
+  max_concurrent: 10
+  idle_timeout: "30m"
+  cpu_limit: "1.0"
+  memory_limit: "1g"
+
+connectors:
+  clickup:
+    enabled: false
+    webhook_secret: "" # Set via IVY_CLICKUP_WEBHOOK_SECRET env var
+    api_token: "" # Set via IVY_CLICKUP_API_TOKEN env var
+    list_id: ""
+    space_id: ""

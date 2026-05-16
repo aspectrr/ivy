@@ -1,0 +1,26 @@
+# leaf — Leaf daemon configuration (runs on log parser hosts)
+
+vine:
+  address: "localhost:50051"
+  tls:
+    cert: ""
+    key: ""
+    ca: ""
+  reconnect_interval: "5s"
+
+allowed_directories:
+  - "/etc/logstash"
+  - "/var/log/logstash"
+
+allowed_commands:
+  - grep
+  - awk
+  - find
+  - cat
+  - tail
+  - systemctl
+  - journalctl
+
+max_concurrent_commands: 3
+command_timeout: "30s"
+log_level: "info"
