@@ -10,6 +10,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 )
 
 // Sandbox represents a running Docker container that serves as an agent workspace.
@@ -62,8 +63,9 @@ func (s *Sandbox) Exec(ctx context.Context, cmd string, args ...string) (*ExecRe
 	}
 	defer attachResp.Close()
 
-	output, err := io.ReadAll(attachResp.Reader)
-	if err != nil {
+	// Use stdcopy to properly demux Docker's multiplexed stream.
+	var stdoutBuf, stderrBuf bytes.Buffer
+	if _, err := stdcopy.StdCopy(&stdoutBuf, &stderrBuf, attachResp.Reader); err != nil {
 		return nil, fmt.Errorf("reading exec output: %w", err)
 	}
 
@@ -72,12 +74,9 @@ func (s *Sandbox) Exec(ctx context.Context, cmd string, args ...string) (*ExecRe
 		return nil, fmt.Errorf("inspecting exec: %w", err)
 	}
 
-	// Docker multiplexes stdout and stderr; parse them.
-	stdout, stderr := parseMultiplexedOutput(output)
-
 	return &ExecResult{
-		Stdout:   stdout,
-		Stderr:   stderr,
+		Stdout:   stdoutBuf.String(),
+		Stderr:   stderrBuf.String(),
 		ExitCode: inspectResp.ExitCode,
 	}, nil
 }
@@ -91,7 +90,7 @@ func (s *Sandbox) WriteFile(ctx context.Context, path string, content []byte) er
 
 	hdr := &tar.Header{
 		Name: path,
-		Mode: 0644,
+		Mode: 0o644,
 		Size: int64(len(content)),
 	}
 	if err := tw.WriteHeader(hdr); err != nil {
@@ -142,8 +141,8 @@ func (s *Sandbox) ReadFile(ctx context.Context, path string) (string, error) {
 
 // parseMultiplexedOutput splits Docker's multiplexed stream into stdout and stderr.
 // Docker uses an 8-byte header: [streamType(1), padding(3), size(4)].
+// This is used only for unit testing the parsing logic.
 func parseMultiplexedOutput(raw []byte) (string, string) {
-
 	var stdout, stderr bytes.Buffer
 	reader := bytes.NewReader(raw)
 
@@ -171,5 +170,3 @@ func parseMultiplexedOutput(raw []byte) (string, string) {
 
 	return stdout.String(), stderr.String()
 }
-
-// portMap and networkConfig removed — not needed for agent sandboxes.
