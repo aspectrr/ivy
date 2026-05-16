@@ -49,6 +49,3 @@ deploy/docker/*.tar
 
 .pi
 .pi-lens
-REVIEW.md
-PRD.md
-TASKS.md
