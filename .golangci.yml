@@ -1,8 +1,7 @@
-version: v1
+version: "2"
 
 run:
   timeout: 5m
-  go: "1.24"
 
 linters:
   enable:
@@ -10,9 +9,10 @@ linters:
     - govet
     - staticcheck
     - unused
-    - gosimple
     - ineffassign
-    - typecheck
     - misspell
+
+formatters:
+  enable:
     - gofmt
     - goimports
