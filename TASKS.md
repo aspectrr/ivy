@@ -553,7 +553,7 @@ ivy/
 | Package | Tests | Type |
 |---------|-------|------|
 | `config` | 7 | Unit |
-| `database` | 3 | Integration (Postgres) |
+| `database` | 5 | Integration (Postgres) |
 | `ivyv1` | 1 | Unit |
 | `model` | 0 | Types only |
 | `session` | 5 | Integration (Postgres) |
@@ -573,10 +573,12 @@ ivy/
 | `vine/connector/clickup` (poller) | 5 | Unit (httptest) |
 | `vine/tools` (clickup) | 9 | Unit (mocked) |
 | `vine/embed` | 9 | Unit (httptest) |
-| `vine/skills` | 13 | Integration (Postgres) + Unit |
+| `vine/skills` | 13 | Integration (Postgres) |
+| `vine/skills` (real) | 12 | Real pgvector + Ollama (gated: `IVY_EMBEDDING_TESTS=1`) |
 | `vine/history` | 11 | Integration (Postgres) |
+| `vine/history` (real) | 10 | Real pgvector + Ollama (gated: `IVY_EMBEDDING_TESTS=1`) |
 | `vine/tools` (search) | 8 | Unit (mocked) |
-| **Total** | **315** | |
+| **Total** | **316** | |
 
 ### Next up
 **Phase 6.1 — End-to-End Integration.** Wire all components together: ClickUp polling → session creation → orchestrator → sandbox → tools → response posting. Seed built-in skills to database at startup.
