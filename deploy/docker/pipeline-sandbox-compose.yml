@@ -1,40 +1,37 @@
-# Pipeline Sandbox — Kafka → Logstash → Elasticsearch
+# Pipeline Sandbox — Redpanda → Logstash → Elasticsearch
 # Used by the vine daemon to create isolated pipeline test environments.
 # Each pipeline sandbox gets its own Docker network and container set.
 #
-# This compose file is a TEMPLATE. The pipeline manager creates per-session
-# instances with session-specific network, container names, and Logstash config.
-#
-# Images:
-#   - Kafka: apache/kafka:latest (KRaft mode, no ZooKeeper)
-#   - Elasticsearch: docker.elastic.co/elasticsearch/elasticsearch:8.17.0
-#   - Logstash: docker.elastic.co/logstash/logstash:8.17.0
+# Redpanda is a Kafka-compatible broker — Logstash connects via the standard
+# Kafka protocol. No changes needed to Logstash configs.
 
 services:
-  kafka:
-    image: apache/kafka:latest
-    container_name: ${KAFKA_CONTAINER_NAME:-ivy-pipeline-kafka}
-    environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: CONTROLLER://:9093,BROKER://:9092
-      KAFKA_ADVERTISED_LISTENERS: BROKER://kafka:9092
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,BROKER:PLAINTEXT
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-      KAFKA_INTER_BROKER_LISTENER_NAME: BROKER
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:latest
+    container_name: ${RP_CONTAINER_NAME:-ivy-pipeline-redpanda}
+    command:
+      - redpanda
+      - start
+      - --mode
+      - dev-container
+      - --node-id
+      - "0"
+      - --kafka-addr
+      - PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr
+      - PLAINTEXT://redpanda:9092
+      - --smp
+      - "1"
+      - --memory
+      - 256M
     networks:
       - pipeline
     healthcheck:
-      test: ["CMD-SHELL", "echo 'dump' | nc -w 2 localhost 9092 || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
-      start_period: 10s
+      test: ["CMD-SHELL", "rpk topic list || exit 1"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+      start_period: 3s
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.17.0
@@ -65,7 +62,7 @@ services:
     networks:
       - pipeline
     depends_on:
-      kafka:
+      redpanda:
         condition: service_healthy
       elasticsearch:
         condition: service_healthy

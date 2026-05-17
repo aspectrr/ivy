@@ -90,9 +90,9 @@ func TestPipelineKafkaReady(t *testing.T) {
 		t.Fatalf("WaitForHealth: %v", err)
 	}
 
-	// List topics via kafka-topics.sh — should work without error.
+	// List topics via rpk — should work without error.
 	execResp, err := ps.cli.ContainerExecCreate(ctx, ps.KafkaContainerID, container.ExecOptions{
-		Cmd:          []string{"/opt/kafka/bin/kafka-topics.sh", "--list", "--bootstrap-server", "localhost:9092"},
+		Cmd:          []string{"rpk", "topic", "list"},
 		AttachStdout: true,
 		AttachStderr: true,
 	})
@@ -112,7 +112,7 @@ func TestPipelineKafkaReady(t *testing.T) {
 
 	t.Logf("kafka topics: stdout=%q stderr=%q", stdoutBuf.String(), stderrBuf.String())
 	if stdoutBuf.Len() == 0 && stderrBuf.Len() == 0 {
-		t.Fatal("expected some output from kafka-topics.sh")
+		t.Fatal("expected some output from rpk topic list")
 	}
 }
 
@@ -194,22 +194,59 @@ output {
 	if err := pm.WaitForHealth(ctx, ps, 3*time.Minute); err != nil {
 		t.Fatalf("WaitForHealth: %v", err)
 	}
-	t.Log("all services healthy, waiting for Logstash to connect to Kafka...")
+	t.Log("all services healthy, waiting for Logstash to fully connect...")
 
-	// Give Logstash time to connect to Kafka and start consuming.
-	time.Sleep(10 * time.Second)
+	// Debug: verify Logstash config and connectivity.
+	debugSB := &Sandbox{ID: ps.LogstashContainerID, cli: ps.cli}
+	cfgContent, err := debugSB.ReadFile(ctx, "/usr/share/logstash/pipeline/logstash.conf")
+	if err != nil {
+		t.Fatalf("reading Logstash config: %v", err)
+	}
+	t.Logf("Logstash config:\n%s", cfgContent)
+
+	// Check DNS resolution from Logstash.
+	dnsResult, _ := debugSB.Exec(ctx, "bash", "-c", "getent hosts kafka elasticsearch 2>&1 || echo 'DNS failed'")
+	t.Logf("DNS from Logstash: stdout=%q stderr=%q exit=%d", dnsResult.Stdout, dnsResult.Stderr, dnsResult.ExitCode)
+
+	// Create the topic before Logstash subscribes.
+	createTopicCmd := []string{"rpk", "topic", "create", "test-events", "--partitions", "1"}
+	execResp, err := ps.cli.ContainerExecCreate(ctx, ps.RedpandaContainerID, container.ExecOptions{
+		Cmd:          createTopicCmd,
+		AttachStdout: true,
+		AttachStderr: true,
+	})
+	if err != nil {
+		t.Fatalf("topic create exec: %v", err)
+	}
+	_, err = ps.cli.ContainerExecAttach(ctx, execResp.ID, container.ExecStartOptions{})
+	if err != nil {
+		t.Fatalf("topic create attach: %v", err)
+	}
+	t.Log("topic test-events created")
+
+	// Wait for Logstash to connect to both Kafka and ES.
+	t.Log("waiting 30s for Logstash to fully initialize...")
+	time.Sleep(30 * time.Second)
+
+	// Check ES cluster health for diagnostics.
+	healthResult, healthErr := ps.QueryES(ctx, "_cluster", `{"query":{"match_all":{}}}`)
+	if healthErr == nil {
+		t.Logf("ES cluster health: %s", string(healthResult))
+	} else {
+		t.Logf("ES cluster health query failed: %v", healthErr)
+	}
 
 	// Send test data.
 	testMessage := `{"level":"ERROR","service":"api-gateway","message":"Connection timeout to backend","timestamp":"2025-01-15T10:30:00Z"}`
 	if err := ps.SendData(ctx, "test-events", testMessage); err != nil {
 		t.Fatalf("SendData: %v", err)
 	}
-	t.Log("data sent to Kafka")
+	t.Log("data sent to Redpanda")
 
-	// Poll ES until data appears or timeout.
+	// Poll ES until data appears or timeout (be patient — index creation can take time).
 	var result json.RawMessage
 	var esResp map[string]interface{}
-	for i := 0; i < 30; i++ {
+	for i := 0; i < 60; i++ {
 		result, err = ps.QueryES(ctx, "test-events", `{"query":{"match_all":{}}}`)
 		if err != nil {
 			t.Logf("QueryES attempt %d: %v", i, err)

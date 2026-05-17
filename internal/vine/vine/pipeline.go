@@ -17,16 +17,19 @@ import (
 	"github.com/docker/go-connections/nat"
 )
 
-// PipelineSandbox represents a running Kafka → Logstash → ES pipeline.
+// PipelineSandbox represents a running Redpanda → Logstash → ES pipeline.
 type PipelineSandbox struct {
 	SessionID string
 	NetworkID string
 
-	KafkaContainerID         string
+	RedpandaContainerID      string
 	ElasticsearchContainerID string
 	LogstashContainerID      string
 
-	KafkaAddr string // host:port for producing messages
+	// KafkaContainerID is kept for backward compat; points to the Redpanda container.
+	KafkaContainerID string
+
+	KafkaAddr string // host:port for producing messages (Kafka protocol compatible)
 	ESAddr    string // http://host:port for querying
 
 	CreatedAt  time.Time
@@ -37,7 +40,7 @@ type PipelineSandbox struct {
 
 // PipelineConfig holds configuration for creating a pipeline sandbox.
 type PipelineConfig struct {
-	KafkaImage         string
+	RedpandaImage      string
 	ElasticsearchImage string
 	LogstashImage      string
 	LogstashConfig     string // Raw Logstash pipeline config
@@ -45,7 +48,7 @@ type PipelineConfig struct {
 
 // PipelineManager manages the lifecycle of pipeline sandboxes.
 // Each pipeline sandbox gets its own Docker network and 3 containers:
-// Kafka, Logstash, Elasticsearch.
+// Redpanda (Kafka-compatible), Logstash, Elasticsearch.
 type PipelineManager struct {
 	cli       *client.Client
 	logger    *slog.Logger
@@ -71,15 +74,16 @@ func NewPipelineManager(dockerHost string, logger *slog.Logger) (*PipelineManage
 	}, nil
 }
 
-// Create spins up a full Kafka → Logstash → ES pipeline for a session.
-func (pm *PipelineManager) Create(ctx context.Context, sessionID string, cfg PipelineConfig) (*PipelineSandbox, error) {
+// Create spins up a full Redpanda → Logstash → ES pipeline for a session.
+func (pm *PipelineManager) Create(ctx context.Context, sessionID string, cfg PipelineConfig) (_ *PipelineSandbox, retErr error) {
+	var ps *PipelineSandbox
 	if _, exists := pm.pipelines[sessionID]; exists {
 		return nil, fmt.Errorf("pipeline already exists for session %s", sessionID)
 	}
 
 	// Apply defaults.
-	if cfg.KafkaImage == "" {
-		cfg.KafkaImage = "apache/kafka:latest"
+	if cfg.RedpandaImage == "" {
+		cfg.RedpandaImage = "docker.redpanda.com/redpandadata/redpanda:latest"
 	}
 	if cfg.ElasticsearchImage == "" {
 		cfg.ElasticsearchImage = "docker.elastic.co/elasticsearch/elasticsearch:8.17.0"
@@ -116,9 +120,9 @@ func (pm *PipelineManager) Create(ctx context.Context, sessionID string, cfg Pip
 	networkID := netResp.ID
 
 	// Cleanup helper: remove network and any containers created so far.
-	cleanup := func(kafkaID, esID, lsID string) {
-		if kafkaID != "" {
-			_ = pm.cli.ContainerRemove(ctx, kafkaID, container.RemoveOptions{Force: true})
+	cleanup := func(rpID, esID, lsID string) {
+		if rpID != "" {
+			_ = pm.cli.ContainerRemove(ctx, rpID, container.RemoveOptions{Force: true})
 		}
 		if esID != "" {
 			_ = pm.cli.ContainerRemove(ctx, esID, container.RemoveOptions{Force: true})
@@ -129,46 +133,55 @@ func (pm *PipelineManager) Create(ctx context.Context, sessionID string, cfg Pip
 		_ = pm.cli.NetworkRemove(ctx, networkID)
 	}
 
-	// 2. Start Kafka (KRaft mode).
-	kafkaID, err := pm.startKafka(ctx, prefix+"-kafka", networkID, cfg.KafkaImage)
+	// 2. Start Redpanda.
+	rpID, err := pm.startRedpanda(ctx, prefix+"-redpanda", networkID, cfg.RedpandaImage)
 	if err != nil {
 		cleanup("", "", "")
-		return nil, fmt.Errorf("starting Kafka: %w", err)
+		return nil, fmt.Errorf("starting Redpanda: %w", err)
 	}
 
 	// 3. Start Elasticsearch.
 	esID, err := pm.startElasticsearch(ctx, prefix+"-es", networkID, cfg.ElasticsearchImage)
 	if err != nil {
-		cleanup(kafkaID, "", "")
+		cleanup(rpID, "", "")
 		return nil, fmt.Errorf("starting Elasticsearch: %w", err)
 	}
 
-	// 4. Start Logstash with rewritten config.
-	lsID, err := pm.startLogstash(ctx, prefix+"-logstash", networkID, cfg.LogstashImage, rewrittenConfig)
-	if err != nil {
-		cleanup(kafkaID, esID, "")
-		return nil, fmt.Errorf("starting Logstash: %w", err)
+	// 4. Wait for ES to be healthy before starting Logstash.
+	// This prevents Logstash from marking ES as dead on first connect.
+	ps = &PipelineSandbox{
+		ElasticsearchContainerID: esID,
+		cli:                      pm.cli,
 	}
-
-	// Get network IP for Kafka (used internally), and host-bound port for ES.
-	kafkaIP, _ := pm.getContainerIP(ctx, kafkaID, networkID)
-
-	// Get the host port that ES is bound to.
-	esAddr, err := pm.getESHostAddr(ctx, esID)
+	ps.ESAddr, err = pm.getESHostAddr(ctx, esID)
 	if err != nil {
-		cleanup(kafkaID, esID, lsID)
+		cleanup(rpID, esID, "")
 		return nil, fmt.Errorf("getting ES address: %w", err)
 	}
 
+	pm.logger.Info("waiting for ES before starting Logstash")
+	if err := pm.waitForES(ctx, ps, time.Now().Add(3*time.Minute)); err != nil {
+		cleanup(rpID, esID, "")
+		return nil, fmt.Errorf("waiting for ES: %w", err)
+	}
+
+	// 5. Start Logstash with rewritten config (ES is now ready).
+	lsID, err := pm.startLogstash(ctx, prefix+"-logstash", networkID, cfg.LogstashImage, rewrittenConfig)
+	if err != nil {
+		cleanup(rpID, esID, "")
+		return nil, fmt.Errorf("starting Logstash: %w", err)
+	}
+
 	now := time.Now()
-	ps := &PipelineSandbox{
+	ps = &PipelineSandbox{
 		SessionID:                sessionID,
 		NetworkID:                networkID,
-		KafkaContainerID:         kafkaID,
+		RedpandaContainerID:      rpID,
+		KafkaContainerID:         rpID, // backward compat
 		ElasticsearchContainerID: esID,
 		LogstashContainerID:      lsID,
-		KafkaAddr:                fmt.Sprintf("%s:9092", kafkaIP),
-		ESAddr:                   esAddr,
+		KafkaAddr:                "redpanda:9092", // internal alias
+		ESAddr:                   ps.ESAddr,
 		CreatedAt:                now,
 		LastUsedAt:               now,
 		cli:                      pm.cli,
@@ -178,7 +191,7 @@ func (pm *PipelineManager) Create(ctx context.Context, sessionID string, cfg Pip
 
 	pm.logger.Info("pipeline sandbox created",
 		"session_id", sessionID,
-		"kafka_id", kafkaID,
+		"redpanda_id", rpID,
 		"es_id", esID,
 		"logstash_id", lsID,
 		"network_id", networkID,
@@ -205,15 +218,15 @@ func (pm *PipelineManager) Destroy(ctx context.Context, sessionID string) error 
 
 	removeOpts := container.RemoveOptions{Force: true}
 
-	// Remove containers in reverse order: Logstash → ES → Kafka.
+	// Remove containers in reverse order: Logstash → ES → Redpanda.
 	if ps.LogstashContainerID != "" {
 		_ = pm.cli.ContainerRemove(ctx, ps.LogstashContainerID, removeOpts)
 	}
 	if ps.ElasticsearchContainerID != "" {
 		_ = pm.cli.ContainerRemove(ctx, ps.ElasticsearchContainerID, removeOpts)
 	}
-	if ps.KafkaContainerID != "" {
-		_ = pm.cli.ContainerRemove(ctx, ps.KafkaContainerID, removeOpts)
+	if ps.RedpandaContainerID != "" {
+		_ = pm.cli.ContainerRemove(ctx, ps.RedpandaContainerID, removeOpts)
 	}
 
 	// Remove the dedicated network.
@@ -235,49 +248,19 @@ func (pm *PipelineManager) Close(ctx context.Context) error {
 	return pm.cli.Close()
 }
 
-// SendData produces a message to the pipeline's Kafka broker.
-// It runs kafka-console-producer.sh inside the Kafka container.
+// SendData produces a message to the pipeline's Redpanda broker using rpk.
 func (ps *PipelineSandbox) SendData(ctx context.Context, topic, data string) error {
 	ps.LastUsedAt = time.Now()
 
-	// Create the topic first (auto.create.topics.enable may not be on).
-	// Use kafka-topics.sh --create --if-not-exists.
-	topicCmd := []string{
-		"/opt/kafka/bin/kafka-topics.sh",
-		"--create", "--if-not-exists",
-		"--topic", topic,
-		"--bootstrap-server", "localhost:9092",
-		"--partitions", "1",
-		"--replication-factor", "1",
-	}
-
-	createResp, err := ps.cli.ContainerExecCreate(ctx, ps.KafkaContainerID, container.ExecOptions{
-		Cmd:          topicCmd,
-		AttachStdout: true,
-		AttachStderr: true,
-	})
-	if err != nil {
-		return fmt.Errorf("creating topic exec: %w", err)
-	}
-
-	attachResp, err := ps.cli.ContainerExecAttach(ctx, createResp.ID, container.ExecStartOptions{})
-	if err != nil {
-		return fmt.Errorf("attaching topic exec: %w", err)
-	}
-	attachResp.Close()
-
-	// Wait briefly for topic creation.
-	_, _ = ps.cli.ContainerExecInspect(ctx, createResp.ID)
-
-	// Produce the message.
+	// rpk topic produce handles topic auto-creation in dev-container mode.
 	produceCmd := []string{
 		"/bin/bash", "-c",
-		fmt.Sprintf("echo '%s' | /opt/kafka/bin/kafka-console-producer.sh --topic %s --bootstrap-server localhost:9092",
+		fmt.Sprintf("echo '%s' | rpk topic produce %s --format '%%v'",
 			escapeForShell(data), topic,
 		),
 	}
 
-	execResp, err := ps.cli.ContainerExecCreate(ctx, ps.KafkaContainerID, container.ExecOptions{
+	execResp, err := ps.cli.ContainerExecCreate(ctx, ps.RedpandaContainerID, container.ExecOptions{
 		Cmd:          produceCmd,
 		AttachStdout: true,
 		AttachStderr: true,
@@ -286,7 +269,7 @@ func (ps *PipelineSandbox) SendData(ctx context.Context, topic, data string) err
 		return fmt.Errorf("creating producer exec: %w", err)
 	}
 
-	attachResp, err = ps.cli.ContainerExecAttach(ctx, execResp.ID, container.ExecStartOptions{})
+	attachResp, err := ps.cli.ContainerExecAttach(ctx, execResp.ID, container.ExecStartOptions{})
 	if err != nil {
 		return fmt.Errorf("attaching producer exec: %w", err)
 	}
@@ -300,7 +283,7 @@ func (ps *PipelineSandbox) SendData(ctx context.Context, topic, data string) err
 		return fmt.Errorf("inspecting producer exec: %w", err)
 	}
 	if inspectResp.ExitCode != 0 {
-		return fmt.Errorf("kafka-console-producer exited with code %d", inspectResp.ExitCode)
+		return fmt.Errorf("rpk topic produce exited with code %d", inspectResp.ExitCode)
 	}
 
 	return nil
@@ -376,7 +359,6 @@ func (ps *PipelineSandbox) GetLogstashLogs(ctx context.Context, tail string) (st
 		return "", fmt.Errorf("reading Logstash logs: %w", err)
 	}
 
-	// Strip Docker log framing (8-byte headers).
 	return stripDockerLogHeaders(data), nil
 }
 
@@ -390,12 +372,10 @@ func (ps *PipelineSandbox) UpdateLogstashConfig(ctx context.Context, config stri
 
 	rewritten := RewriteLogstashConfig(config)
 
-	// Write the config file into the Logstash container.
 	if err := ps.writeLogstashConfig(ctx, rewritten); err != nil {
 		return fmt.Errorf("writing config: %w", err)
 	}
 
-	// Restart Logstash to pick up the new config.
 	if err := ps.cli.ContainerRestart(ctx, ps.LogstashContainerID, container.StopOptions{}); err != nil {
 		return fmt.Errorf("restarting Logstash: %w", err)
 	}
@@ -405,26 +385,21 @@ func (ps *PipelineSandbox) UpdateLogstashConfig(ctx context.Context, config stri
 
 // --- Internal helpers ---
 
-func (pm *PipelineManager) startKafka(ctx context.Context, name, networkID, image string) (string, error) {
+func (pm *PipelineManager) startRedpanda(ctx context.Context, name, networkID, image string) (string, error) {
 	createResp, err := pm.cli.ContainerCreate(ctx,
 		&container.Config{
 			Image: image,
-			Env: []string{
-				"KAFKA_NODE_ID=1",
-				"KAFKA_PROCESS_ROLES=broker,controller",
-				"KAFKA_LISTENERS=CONTROLLER://:9093,BROKER://:9092",
-				"KAFKA_ADVERTISED_LISTENERS=BROKER://kafka:9092",
-				"KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER",
-				"KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,BROKER:PLAINTEXT",
-				"KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:9093",
-				"KAFKA_INTER_BROKER_LISTENER_NAME=BROKER",
-				"KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1",
-				"KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1",
-				"KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1",
-				"KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0",
+			Cmd: []string{
+				"redpanda", "start",
+				"--mode", "dev-container",
+				"--node-id", "0",
+				"--kafka-addr", "PLAINTEXT://0.0.0.0:9092",
+				"--advertise-kafka-addr", "PLAINTEXT://redpanda:9092",
+				"--smp", "1",
+				"--memory", "512M",
 			},
 			Labels: map[string]string{
-				"ivy-type":       "pipeline-kafka",
+				"ivy-type":       "pipeline-redpanda",
 				"ivy-session-id": name,
 			},
 		},
@@ -432,20 +407,19 @@ func (pm *PipelineManager) startKafka(ctx context.Context, name, networkID, imag
 		nil, nil, name,
 	)
 	if err != nil {
-		return "", fmt.Errorf("creating Kafka container: %w", err)
+		return "", fmt.Errorf("creating Redpanda container: %w", err)
 	}
 
-	// Connect to the network with alias.
 	if err := pm.cli.NetworkConnect(ctx, networkID, createResp.ID, &network.EndpointSettings{
-		Aliases: []string{"kafka"},
+		Aliases: []string{"redpanda", "kafka"}, // "kafka" alias for Logstash compat
 	}); err != nil {
 		_ = pm.cli.ContainerRemove(ctx, createResp.ID, container.RemoveOptions{Force: true})
-		return "", fmt.Errorf("connecting Kafka to network: %w", err)
+		return "", fmt.Errorf("connecting Redpanda to network: %w", err)
 	}
 
 	if err := pm.cli.ContainerStart(ctx, createResp.ID, container.StartOptions{}); err != nil {
 		_ = pm.cli.ContainerRemove(ctx, createResp.ID, container.RemoveOptions{Force: true})
-		return "", fmt.Errorf("starting Kafka container: %w", err)
+		return "", fmt.Errorf("starting Redpanda container: %w", err)
 	}
 
 	return createResp.ID, nil
@@ -460,6 +434,7 @@ func (pm *PipelineManager) startElasticsearch(ctx context.Context, name, network
 				"xpack.security.enabled=false",
 				"xpack.security.http.ssl.enabled=false",
 				"ES_JAVA_OPTS=-Xms512m -Xmx512m",
+				"cluster.routing.allocation.disk.threshold_enabled=false",
 			},
 			Labels: map[string]string{
 				"ivy-type":       "pipeline-es",
@@ -471,7 +446,7 @@ func (pm *PipelineManager) startElasticsearch(ctx context.Context, name, network
 		},
 		&container.HostConfig{
 			PortBindings: nat.PortMap{
-				"9200/tcp": []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: "0"}}, // random available port
+				"9200/tcp": []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: "0"}},
 			},
 		},
 		nil, nil, name,
@@ -480,7 +455,6 @@ func (pm *PipelineManager) startElasticsearch(ctx context.Context, name, network
 		return "", fmt.Errorf("creating ES container: %w", err)
 	}
 
-	// Connect to the network with alias.
 	if err := pm.cli.NetworkConnect(ctx, networkID, createResp.ID, &network.EndpointSettings{
 		Aliases: []string{"elasticsearch"},
 	}); err != nil {
@@ -515,7 +489,6 @@ func (pm *PipelineManager) startLogstash(ctx context.Context, name, networkID, i
 		return "", fmt.Errorf("creating Logstash container: %w", err)
 	}
 
-	// Connect to the network with alias.
 	if err := pm.cli.NetworkConnect(ctx, networkID, createResp.ID, &network.EndpointSettings{
 		Aliases: []string{"logstash"},
 	}); err != nil {
@@ -523,27 +496,22 @@ func (pm *PipelineManager) startLogstash(ctx context.Context, name, networkID, i
 		return "", fmt.Errorf("connecting Logstash to network: %w", err)
 	}
 
+	// Write the pipeline config BEFORE starting the container.
+	ls := &PipelineSandbox{LogstashContainerID: createResp.ID, cli: pm.cli}
+	if err := ls.writeLogstashConfig(ctx, config); err != nil {
+		_ = pm.cli.ContainerRemove(ctx, createResp.ID, container.RemoveOptions{Force: true})
+		return "", fmt.Errorf("writing Logstash config: %w", err)
+	}
+
+	// Now start — Logstash will pick up the config on first boot.
 	if err := pm.cli.ContainerStart(ctx, createResp.ID, container.StartOptions{}); err != nil {
 		_ = pm.cli.ContainerRemove(ctx, createResp.ID, container.RemoveOptions{Force: true})
 		return "", fmt.Errorf("starting Logstash container: %w", err)
 	}
 
-	// Write the pipeline config into the running container.
-	ls := &PipelineSandbox{LogstashContainerID: createResp.ID, cli: pm.cli}
-	if err := ls.writeLogstashConfig(ctx, config); err != nil {
-		return createResp.ID, fmt.Errorf("writing Logstash config: %w", err)
-	}
-
-	// Restart Logstash to pick up the config.
-	if err := pm.cli.ContainerRestart(ctx, createResp.ID, container.StopOptions{}); err != nil {
-		return createResp.ID, fmt.Errorf("restarting Logstash with config: %w", err)
-	}
-
 	return createResp.ID, nil
 }
 
-// getESHostAddr returns the host-accessible address for the ES container.
-// ES is published on a random host port, so we need to inspect the port bindings.
 func (pm *PipelineManager) getESHostAddr(ctx context.Context, containerID string) (string, error) {
 	inspect, err := pm.cli.ContainerInspect(ctx, containerID)
 	if err != nil {
@@ -561,26 +529,6 @@ func (pm *PipelineManager) getESHostAddr(ctx context.Context, containerID string
 func (ps *PipelineSandbox) writeLogstashConfig(ctx context.Context, config string) error {
 	sb := &Sandbox{ID: ps.LogstashContainerID, cli: ps.cli}
 	return sb.WriteFile(ctx, "/usr/share/logstash/pipeline/logstash.conf", []byte(config))
-}
-
-func (pm *PipelineManager) getContainerIP(ctx context.Context, containerID, networkID string) (string, error) {
-	inspect, err := pm.cli.ContainerInspect(ctx, containerID)
-	if err != nil {
-		return "", err
-	}
-	if inspect.NetworkSettings != nil {
-		// Prefer the pipeline network if specified.
-		if networkID != "" {
-			if net, ok := inspect.NetworkSettings.Networks[networkID]; ok {
-				return net.IPAddress, nil
-			}
-		}
-		// Fall back to first network.
-		for _, net := range inspect.NetworkSettings.Networks {
-			return net.IPAddress, nil
-		}
-	}
-	return "", fmt.Errorf("no network found for container %s", containerID)
 }
 
 // escapeForShell escapes a string for safe embedding in a single-quoted shell string.
@@ -608,6 +556,7 @@ func stripDockerLogHeaders(data []byte) string {
 }
 
 // defaultLogstashConfig returns a simple passthrough config for testing.
+// Uses "kafka" alias which resolves to the Redpanda container via network alias.
 func defaultLogstashConfig() string {
 	return `input {
   kafka {
@@ -632,12 +581,12 @@ output {
 `
 }
 
-// WaitForHealth waits for Kafka and ES to become healthy within the timeout.
+// WaitForHealth waits for Redpanda and ES to become healthy within the timeout.
 func (pm *PipelineManager) WaitForHealth(ctx context.Context, ps *PipelineSandbox, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 
-	// Wait for Kafka to be ready (container running + accepting connections).
-	if err := pm.waitForKafka(ctx, ps.KafkaContainerID, deadline); err != nil {
+	// Wait for Redpanda to be ready.
+	if err := pm.waitForRedpanda(ctx, ps.RedpandaContainerID, deadline); err != nil {
 		return err
 	}
 
@@ -649,16 +598,16 @@ func (pm *PipelineManager) WaitForHealth(ctx context.Context, ps *PipelineSandbo
 	return nil
 }
 
-func (pm *PipelineManager) waitForKafka(ctx context.Context, containerID string, deadline time.Time) error {
-	// First wait for container to be running.
-	if err := pm.waitForContainer(ctx, containerID, "Kafka", deadline); err != nil {
+func (pm *PipelineManager) waitForRedpanda(ctx context.Context, containerID string, deadline time.Time) error {
+	// Wait for container to be running.
+	if err := pm.waitForContainer(ctx, containerID, "Redpanda", deadline); err != nil {
 		return err
 	}
 
-	// Then wait for Kafka broker to accept connections by running kafka-topics.sh.
+	// Wait for Redpanda to accept Kafka API connections via rpk topic list.
 	for time.Now().Before(deadline) {
 		execResp, err := pm.cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
-			Cmd:          []string{"/opt/kafka/bin/kafka-topics.sh", "--list", "--bootstrap-server", "localhost:9092"},
+			Cmd:          []string{"rpk", "topic", "list"},
 			AttachStdout: true,
 			AttachStderr: true,
 		})
@@ -678,9 +627,9 @@ func (pm *PipelineManager) waitForKafka(ctx context.Context, containerID string,
 		if err == nil && inspect.ExitCode == 0 {
 			return nil
 		}
-		time.Sleep(2 * time.Second)
+		time.Sleep(1 * time.Second)
 	}
-	return fmt.Errorf("kafka did not become ready within timeout (container: %s)", containerID[:12])
+	return fmt.Errorf("redpanda did not become ready within timeout (container: %s)", containerID[:12])
 }
 
 func (pm *PipelineManager) waitForContainer(ctx context.Context, containerID, name string, deadline time.Time) error {

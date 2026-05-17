@@ -170,10 +170,10 @@ Build the tool registry and dispatch system that the agent uses. This is what tr
 
 ---
 
-## Phase 3: Pipeline Sandbox
+## Phase 3: Pipeline Sandbox — ✅ COMPLETE (3.1 + 3.2)
 
 ### 3.1 — Pipeline Sandbox Infrastructure
-- **Status:** `[ ]`
+- **Status:** `[x]`
 - **Depends On:** 2.3
 - **Blocks:** 3.2, 3.3
 
@@ -212,7 +212,7 @@ Build the sandboxed Kafka → Logstash → Elasticsearch pipeline that agents us
 ---
 
 ### 3.2 — Pipeline Tools
-- **Status:** `[ ]`
+- **Status:** `[x]`
 - **Depends On:** 2.4, 3.1
 - **Blocks:** None
 
@@ -248,6 +248,7 @@ Expose pipeline sandbox operations as tools the agent can call.
 - **Status:** `[ ]`
 - **Depends On:** 2.4, 3.1, 5.1
 - **Blocks:** None
+- **Note:** Deferred to Phase 6 (depends on ClickUp connector from Phase 5.1).
 
 **Description:**
 The end-to-end flow where the agent asks the user for data, receives it via the ClickUp task, and uses it to test in the pipeline sandbox.
