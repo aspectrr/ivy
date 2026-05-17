@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/aspectrr/ivy/internal/vine/config"
 	"github.com/aspectrr/ivy/internal/vine/database"
@@ -13,44 +14,79 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// These tests use REAL Ollama embeddings and REAL Postgres pgvector.
-// Run with: IVY_EMBEDDING_TESTS=1 go test ./internal/vine/history/ -run TestReal -v
+// Real embedding integration tests for history search.
+//
+// Gated behind IVY_EMBEDDING_TESTS=1. Same requirements as skills real tests:
+// Postgres + Ollama with nomic-embed-text (or override via env vars).
+//
+//	IVY_EMBEDDING_TESTS=1 go test ./internal/vine/history/ -run TestReal -v
 
-func realPool(t *testing.T) *pgxpool.Pool {
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func requirePostgres(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	cfg := config.DatabaseConfig{
-		Host:     "localhost",
+		Host:     envOr("IVY_TEST_DB_HOST", "localhost"),
 		Port:     5432,
 		Name:     "ivy",
 		User:     "ivy",
-		Password: "ivy",
+		Password: envOr("IVY_TEST_DB_PASSWORD", "ivy"),
 		SSLMode:  "disable",
 	}
-	pool, err := database.NewPool(context.Background(), cfg)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	pool, err := database.NewPool(ctx, cfg)
 	if err != nil {
-		t.Fatalf("connecting to database: %v", err)
+		t.Skipf("Postgres not reachable.\n\n"+
+			"Start Postgres with pgvector:\n"+
+			"  docker run -d --name ivy-postgres -p 5432:5432 \\\n"+
+			"    -e POSTGRES_USER=ivy -e POSTGRES_PASSWORD=ivy -e POSTGRES_DB=ivy \\\n"+
+			"    pgvector/pgvector:pg17\n\n"+
+			"Error: %v", err)
 	}
 	t.Cleanup(func() { pool.Close() })
 	return pool
 }
 
-func realEmbedClient(t *testing.T) *embed.Client {
+func requireEmbedding(t *testing.T) (*embed.Client, int) {
 	t.Helper()
-	return embed.NewClient(config.LLMConfig{
-		Endpoint:       "http://localhost:11434/v1",
-		APIKey:         "ollama",
-		EmbeddingModel: "nomic-embed-text",
-	})
-}
-
-func ensureDim(t *testing.T, pool *pgxpool.Pool) {
-	t.Helper()
-	if err := database.EnsureEmbeddingDim(context.Background(), pool, 768); err != nil {
-		t.Fatalf("EnsureEmbeddingDim(768): %v", err)
+	if os.Getenv("IVY_EMBEDDING_TESTS") == "" {
+		t.Skip("skipping real embedding tests — set IVY_EMBEDDING_TESTS=1 to run")
 	}
+
+	endpoint := envOr("IVY_TEST_EMBED_ENDPOINT", "http://localhost:11434/v1")
+	model := envOr("IVY_TEST_EMBED_MODEL", "nomic-embed-text")
+	dim := 768
+	if v := os.Getenv("IVY_TEST_EMBED_DIM"); v != "" {
+		_, _ = fmt.Sscanf(v, "%d", &dim)
+	}
+
+	client := embed.NewClient(config.LLMConfig{
+		Endpoint:       endpoint,
+		APIKey:         "unused",
+		EmbeddingModel: model,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	vec, err := client.Embed(ctx, "test")
+	if err != nil {
+		t.Skipf("Embedding endpoint not reachable at %s (model %s).\n"+
+			"Start Ollama: ollama pull %s\n\n"+
+			"Error: %v", endpoint, model, model, err)
+	}
+	if len(vec) != dim {
+		dim = len(vec)
+	}
+	return client, dim
 }
 
-func realCreateTestSession(t *testing.T, pool *pgxpool.Pool, source string) string {
+func makeSession(t *testing.T, pool *pgxpool.Pool, source string) string {
 	t.Helper()
 	var id string
 	err := pool.QueryRow(context.Background(), `
@@ -62,18 +98,20 @@ func realCreateTestSession(t *testing.T, pool *pgxpool.Pool, source string) stri
 	return id
 }
 
-func TestReal_IndexAndSearch(t *testing.T) {
-	if os.Getenv("IVY_EMBEDDING_TESTS") == "" {
-		t.Skip("skipping real embedding test (set IVY_EMBEDDING_TESTS=1)")
-	}
-
-	pool := realPool(t)
-	ensureDim(t, pool)
-	embedClient := realEmbedClient(t)
-	store := NewStore(pool, embedClient)
+func setupStore(t *testing.T) (*Store, context.Context, *pgxpool.Pool) {
+	t.Helper()
+	embedClient, dim := requireEmbedding(t)
+	pool := requirePostgres(t)
 	ctx := context.Background()
+	if err := database.EnsureEmbeddingDim(ctx, pool, dim); err != nil {
+		t.Fatalf("EnsureEmbeddingDim(%d): %v", dim, err)
+	}
+	return NewStore(pool, embedClient), ctx, pool
+}
 
-	// Index sessions with distinct summaries
+func TestReal_IndexAndSearch(t *testing.T) {
+	store, ctx, pool := setupStore(t)
+
 	sessions := []struct {
 		summary string
 		source  string
@@ -88,17 +126,24 @@ func TestReal_IndexAndSearch(t *testing.T) {
 	sessionIDs := make([]string, len(sessions))
 	entryIDs := make([]string, len(sessions))
 	for i, s := range sessions {
-		sessionIDs[i] = realCreateTestSession(t, pool, s.source)
+		sessionIDs[i] = makeSession(t, pool, s.source)
 		entry, err := store.IndexSession(ctx, sessionIDs[i], s.summary)
 		if err != nil {
 			t.Fatalf("IndexSession(%d): %v", i, err)
 		}
 		entryIDs[i] = entry.ID
-		t.Logf("Indexed session %s: %s...", sessionIDs[i][:8], s.summary[:50])
+		t.Logf("Indexed: %s... → session %s", s.summary[:50], sessionIDs[i][:8])
 	}
+	defer func() {
+		for _, id := range entryIDs {
+			_, _ = pool.Exec(ctx, `DELETE FROM knowledge_entries WHERE id = $1`, id)
+		}
+		for _, id := range sessionIDs {
+			_, _ = pool.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, id)
+		}
+	}()
 
-	// Test: search for Kafka issues
-	t.Run("KafkaSearch", func(t *testing.T) {
+	t.Run("KafkaQueryFindsKafka", func(t *testing.T) {
 		results, err := store.SearchByText(ctx, "kafka consumers are lagging, messages piling up", 3)
 		if err != nil {
 			t.Fatalf("SearchByText: %v", err)
@@ -107,16 +152,14 @@ func TestReal_IndexAndSearch(t *testing.T) {
 			t.Fatal("expected results")
 		}
 		for i, r := range results {
-			t.Logf("  #%d: session=%s content=%q", i+1, r.SessionID[:8], truncate(r.Content, 60))
+			t.Logf("  #%d: %s", i+1, trunc(r.Content, 60))
 		}
-		// Kafka session should be in top results
 		if results[0].SessionID != sessionIDs[0] {
-			t.Errorf("top result session = %s, want %s (kafka)", results[0].SessionID[:8], sessionIDs[0][:8])
+			t.Errorf("top result = session %s, want kafka session %s", results[0].SessionID[:8], sessionIDs[0][:8])
 		}
 	})
 
-	// Test: search for ES issues
-	t.Run("ElasticsearchSearch", func(t *testing.T) {
+	t.Run("ESQueryFindsES", func(t *testing.T) {
 		results, err := store.SearchByText(ctx, "elasticsearch field type conflict in index mapping", 3)
 		if err != nil {
 			t.Fatalf("SearchByText: %v", err)
@@ -125,15 +168,14 @@ func TestReal_IndexAndSearch(t *testing.T) {
 			t.Fatal("expected results")
 		}
 		for i, r := range results {
-			t.Logf("  #%d: %q", i+1, truncate(r.Content, 60))
+			t.Logf("  #%d: %s", i+1, trunc(r.Content, 60))
 		}
 		if results[0].SessionID != sessionIDs[1] {
-			t.Errorf("top result = %s, want ES session %s", results[0].SessionID[:8], sessionIDs[1][:8])
+			t.Errorf("top result = session %s, want ES session %s", results[0].SessionID[:8], sessionIDs[1][:8])
 		}
 	})
 
-	// Test: search for Logstash issues
-	t.Run("LogstashSearch", func(t *testing.T) {
+	t.Run("LogstashQueryFindsLogstash", func(t *testing.T) {
 		results, err := store.SearchByText(ctx, "logstash dropping events, grok parse failures", 3)
 		if err != nil {
 			t.Fatalf("SearchByText: %v", err)
@@ -142,15 +184,14 @@ func TestReal_IndexAndSearch(t *testing.T) {
 			t.Fatal("expected results")
 		}
 		for i, r := range results {
-			t.Logf("  #%d: %q", i+1, truncate(r.Content, 60))
+			t.Logf("  #%d: %s", i+1, trunc(r.Content, 60))
 		}
 		if results[0].SessionID != sessionIDs[2] {
-			t.Errorf("top result = %s, want Logstash session %s", results[0].SessionID[:8], sessionIDs[2][:8])
+			t.Errorf("top result = session %s, want logstash session %s", results[0].SessionID[:8], sessionIDs[2][:8])
 		}
 	})
 
-	// Test: search for DNS issues — should NOT return Kafka as #1
-	t.Run("DNSSearch", func(t *testing.T) {
+	t.Run("DNSQueryFindsDNS", func(t *testing.T) {
 		results, err := store.SearchByText(ctx, "DNS lookups timing out, name resolution failing", 3)
 		if err != nil {
 			t.Fatalf("SearchByText: %v", err)
@@ -159,14 +200,13 @@ func TestReal_IndexAndSearch(t *testing.T) {
 			t.Fatal("expected results")
 		}
 		for i, r := range results {
-			t.Logf("  #%d: %q", i+1, truncate(r.Content, 60))
+			t.Logf("  #%d: %s", i+1, trunc(r.Content, 60))
 		}
 		if results[0].SessionID != sessionIDs[3] {
-			t.Errorf("top result = %s, want DNS session %s", results[0].SessionID[:8], sessionIDs[3][:8])
+			t.Errorf("top result = session %s, want DNS session %s", results[0].SessionID[:8], sessionIDs[3][:8])
 		}
 	})
 
-	// Test: structured filter by source
 	t.Run("FilterBySource", func(t *testing.T) {
 		results, err := store.SearchByFilter(ctx, map[string]interface{}{"source": "manual"}, 10, 0)
 		if err != nil {
@@ -181,28 +221,11 @@ func TestReal_IndexAndSearch(t *testing.T) {
 			t.Errorf("expected at least 2 manual sessions, got %d", len(results))
 		}
 	})
-
-	// Cleanup
-	for _, id := range entryIDs {
-		_, _ = pool.Exec(ctx, `DELETE FROM knowledge_entries WHERE id = $1`, id)
-	}
-	for _, id := range sessionIDs {
-		_, _ = pool.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, id)
-	}
 }
 
 func TestReal_SearchRanksCorrectly(t *testing.T) {
-	if os.Getenv("IVY_EMBEDDING_TESTS") == "" {
-		t.Skip("skipping real embedding test (set IVY_EMBEDDING_TESTS=1)")
-	}
+	store, ctx, pool := setupStore(t)
 
-	pool := realPool(t)
-	ensureDim(t, pool)
-	embedClient := realEmbedClient(t)
-	store := NewStore(pool, embedClient)
-	ctx := context.Background()
-
-	// Index 3 sessions with very different topics
 	summaries := []string{
 		"Fixed Kafka consumer group lag by adjusting max.poll.interval.ms",
 		"Resolved Elasticsearch mapping conflict by reindexing with explicit types",
@@ -211,17 +234,22 @@ func TestReal_SearchRanksCorrectly(t *testing.T) {
 
 	sessionIDs := make([]string, 3)
 	for i, s := range summaries {
-		sessionIDs[i] = realCreateTestSession(t, pool, "test")
+		sessionIDs[i] = makeSession(t, pool, "test")
 		_, err := store.IndexSession(ctx, sessionIDs[i], s)
 		if err != nil {
 			t.Fatalf("IndexSession(%d): %v", i, err)
 		}
 	}
+	defer func() {
+		for _, id := range sessionIDs {
+			_, _ = pool.Exec(ctx, `DELETE FROM knowledge_entries WHERE session_id = $1`, id)
+			_, _ = pool.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, id)
+		}
+	}()
 
-	// Each query should rank its corresponding topic as #1
 	queries := []struct {
-		query       string
-		wantSession int
+		query string
+		want  int // index into sessionIDs
 	}{
 		{"kafka consumers falling behind on message processing", 0},
 		{"elasticsearch mapper_parsing_exception in log index", 1},
@@ -229,7 +257,7 @@ func TestReal_SearchRanksCorrectly(t *testing.T) {
 	}
 
 	for _, q := range queries {
-		t.Run(fmt.Sprintf("rank_%d", q.wantSession), func(t *testing.T) {
+		t.Run(fmt.Sprintf("rank_%d", q.want), func(t *testing.T) {
 			results, err := store.SearchByText(ctx, q.query, 3)
 			if err != nil {
 				t.Fatalf("SearchByText(%q): %v", q.query, err)
@@ -240,21 +268,15 @@ func TestReal_SearchRanksCorrectly(t *testing.T) {
 			for i, r := range results {
 				t.Logf("  #%d: session=%s", i+1, r.SessionID[:8])
 			}
-			if results[0].SessionID != sessionIDs[q.wantSession] {
+			if results[0].SessionID != sessionIDs[q.want] {
 				t.Errorf("top result = %s, want session[%d] = %s",
-					results[0].SessionID[:8], q.wantSession, sessionIDs[q.wantSession][:8])
+					results[0].SessionID[:8], q.want, sessionIDs[q.want][:8])
 			}
 		})
 	}
-
-	// Cleanup
-	for _, id := range sessionIDs {
-		_, _ = pool.Exec(ctx, `DELETE FROM knowledge_entries WHERE session_id = $1`, id)
-		_, _ = pool.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, id)
-	}
 }
 
-func truncate(s string, n int) string {
+func trunc(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}

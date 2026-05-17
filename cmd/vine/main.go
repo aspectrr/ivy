@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/aspectrr/ivy/internal/vine/config"
+	"github.com/aspectrr/ivy/internal/vine/database"
 )
 
 func main() {
@@ -37,7 +38,23 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// TODO: Initialize database connection pool
+	// Database
+	pool, err := database.NewPool(ctx, cfg.Database)
+	if err != nil {
+		slog.Error("failed to connect to database", "error", err)
+		os.Exit(1)
+	}
+	defer pool.Close()
+
+	// Ensure embedding dimension matches configured model
+	if cfg.LLM.EmbeddingDim > 0 {
+		if err := database.EnsureEmbeddingDim(ctx, pool, cfg.LLM.EmbeddingDim); err != nil {
+			slog.Error("failed to set embedding dimension", "error", err, "dim", cfg.LLM.EmbeddingDim)
+			os.Exit(1)
+		}
+		slog.Info("embedding dimension configured", "dim", cfg.LLM.EmbeddingDim)
+	}
+
 	// TODO: Initialize gRPC server
 	// TODO: Initialize HTTP server (for ClickUp webhooks)
 	// TODO: Initialize sandbox manager
