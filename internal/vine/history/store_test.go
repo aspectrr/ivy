@@ -54,7 +54,7 @@ func (m *mockEmbedder) Embed(_ context.Context, text string) (Vector, error) {
 func testStore(t *testing.T) (*Store, *pgxpool.Pool) {
 	t.Helper()
 	pool := testPool(t)
-	store := NewStore(pool, &mockEmbedder{dim: 1536})
+	store := NewStore(pool, &mockEmbedder{dim: 768})
 	return store, pool
 }
 
@@ -95,7 +95,7 @@ func TestStore_IndexWithEmbedding(t *testing.T) {
 
 	sessionID := createTestSession(t, pool)
 
-	vec := make(Vector, 1536)
+	vec := make(Vector, 768)
 	for i := range vec {
 		vec[i] = float32(i)
 	}
@@ -144,7 +144,10 @@ func TestStore_SearchByText(t *testing.T) {
 	ctx := context.Background()
 
 	sessionID := createTestSession(t, pool)
-	_, _ = store.IndexSession(ctx, sessionID, "Resolved Redpanda broker disk full issue")
+	_, err := store.IndexSession(ctx, sessionID, "Resolved Redpanda broker disk full issue")
+	if err != nil {
+		t.Fatalf("IndexSession() error = %v", err)
+	}
 
 	results, err := store.SearchByText(ctx, "redpanda disk", 5)
 	if err != nil {
@@ -242,9 +245,12 @@ func TestStore_DeleteBySession(t *testing.T) {
 	ctx := context.Background()
 
 	sessionID := createTestSession(t, pool)
-	_, _ = store.IndexSession(ctx, sessionID, "To be deleted")
+	_, err := store.IndexSession(ctx, sessionID, "To be deleted")
+	if err != nil {
+		t.Fatalf("IndexSession() error = %v", err)
+	}
 
-	err := store.DeleteBySession(ctx, sessionID)
+	err = store.DeleteBySession(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("DeleteBySession() error = %v", err)
 	}
@@ -265,7 +271,10 @@ func TestStore_Count(t *testing.T) {
 	}
 
 	sessionID := createTestSession(t, pool)
-	_, _ = store.IndexSession(ctx, sessionID, "Counted entry")
+	_, err = store.IndexSession(ctx, sessionID, "Counted entry")
+	if err != nil {
+		t.Fatalf("IndexSession() error = %v", err)
+	}
 
 	after, _ := store.Count(ctx)
 	if after != initial+1 {

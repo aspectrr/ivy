@@ -48,6 +48,16 @@ func TestEnsureEmbeddingDim(t *testing.T) {
 
 	ctx := context.Background()
 
+	// Determine the current dimension so we can restore it.
+	var origDim int
+	_ = pool.QueryRow(ctx, `
+		SELECT a.atttypmod
+		FROM pg_attribute a
+		JOIN pg_class c ON a.attrelid = c.oid
+		JOIN pg_namespace n ON c.relnamespace = n.oid
+		WHERE c.relname = 'skills' AND a.attname = 'embedding' AND n.nspname = 'public'
+	`).Scan(&origDim)
+
 	// Should work with the default 1536 dims from schema
 	err = EnsureEmbeddingDim(ctx, pool, 1536)
 	if err != nil {
@@ -60,10 +70,12 @@ func TestEnsureEmbeddingDim(t *testing.T) {
 		t.Fatalf("EnsureEmbeddingDim(768): %v", err)
 	}
 
-	// Change back to 1536 to restore original state
-	err = EnsureEmbeddingDim(ctx, pool, 1536)
-	if err != nil {
-		t.Fatalf("EnsureEmbeddingDim(1536 restore): %v", err)
+	// Restore original dimension
+	if origDim > 0 {
+		err = EnsureEmbeddingDim(ctx, pool, origDim)
+		if err != nil {
+			t.Fatalf("EnsureEmbeddingDim(restore %d): %v", origDim, err)
+		}
 	}
 
 	t.Log("embedding dimension switching works correctly")

@@ -109,6 +109,9 @@ func (pm *PipelineManager) Create(ctx context.Context, sessionID string, cfg Pip
 	}
 
 	// 1. Create dedicated Docker network.
+	// Remove any stale network from a previous run that didn't clean up.
+	_ = pm.cli.NetworkRemove(ctx, prefix)
+
 	netResp, err := pm.cli.NetworkCreate(ctx, prefix, network.CreateOptions{
 		Labels: map[string]string{
 			"ivy-session-id": sessionID,
@@ -456,6 +459,12 @@ func (ps *PipelineSandbox) Health(ctx context.Context) (*PipelineHealthReport, e
 func (ps *PipelineSandbox) checkRedpanda(ctx context.Context) ComponentHealth {
 	health := ComponentHealth{Name: "redpanda"}
 
+	if ps.cli == nil {
+		health.Status = "unknown"
+		health.Message = "docker client not initialized"
+		return health
+	}
+
 	// First check container is running.
 	inspect, err := ps.cli.ContainerInspect(ctx, ps.RedpandaContainerID)
 	if err != nil {
@@ -603,6 +612,12 @@ func (ps *PipelineSandbox) checkElasticsearch(ctx context.Context) ComponentHeal
 // checkLogstash checks Logstash container health via container state and log inspection.
 func (ps *PipelineSandbox) checkLogstash(ctx context.Context) ComponentHealth {
 	health := ComponentHealth{Name: "logstash"}
+
+	if ps.cli == nil {
+		health.Status = "unknown"
+		health.Message = "docker client not initialized"
+		return health
+	}
 
 	// Check container is running.
 	inspect, err := ps.cli.ContainerInspect(ctx, ps.LogstashContainerID)

@@ -9,7 +9,7 @@ MAIN_LEAF     := ./cmd/leaf
 PROTO_DIR     := proto
 PROTO_OUT     := internal/ivyv1
 
-.PHONY: all build build-vine build-leaf test lint proto-gen migrate-up migrate-down docker-build clean tidy
+.PHONY: all build build-vine build-leaf test test-e2e test-integration lint proto-gen migrate-up migrate-down docker-build clean tidy
 
 all: build
 
@@ -31,6 +31,10 @@ build-leaf:
 ## test: Run all tests
 test:
 	$(GO) test -race -count=1 ./...
+
+## test-e2e: Run full e2e tests (requires Docker + PostgreSQL + ~4GB RAM)
+test-e2e:
+	IVY_PIPELINE_TESTS=1 IVY_EMBEDDING_TESTS=1 $(GO) test -race -count=1 ./internal/ivyv1 ./internal/leaf/... ./internal/vine/...
 
 ## test-integration: Run integration tests (requires Docker)
 test-integration:

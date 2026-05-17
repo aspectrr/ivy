@@ -55,7 +55,7 @@ func (m *mockEmbedder) Embed(_ context.Context, text string) (Vector, error) {
 func testStore(t *testing.T) (*Store, func()) {
 	t.Helper()
 	pool := testPool(t)
-	store := NewStore(pool, &mockEmbedder{dim: 1536})
+	store := NewStore(pool, &mockEmbedder{dim: 768})
 	return store, func() {}
 }
 
@@ -255,9 +255,12 @@ func TestStore_Delete(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	skill, _ := store.Create(ctx, "deletable-"+uniqueID(t), "Test", "Content", nil)
+	skill, err := store.Create(ctx, "deletable-"+uniqueID(t), "Test", "Content", nil)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
 
-	err := store.Delete(ctx, skill.ID)
+	err = store.Delete(ctx, skill.ID)
 	if err != nil {
 		t.Fatalf("Delete() error = %v", err)
 	}
@@ -274,7 +277,7 @@ func TestStore_UpsertBuiltIn(t *testing.T) {
 
 	ctx := context.Background()
 
-	vec := make(Vector, 1536)
+	vec := make(Vector, 768)
 	for i := range vec {
 		vec[i] = float32(i)
 	}
@@ -291,7 +294,7 @@ func TestStore_UpsertBuiltIn(t *testing.T) {
 	}
 
 	// Upsert should update
-	newVec := make(Vector, 1536)
+	newVec := make(Vector, 768)
 	for i := range newVec {
 		newVec[i] = float32(i + 100)
 	}

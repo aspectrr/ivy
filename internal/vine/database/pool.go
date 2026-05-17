@@ -31,14 +31,26 @@ func NewPool(ctx context.Context, cfg config.DatabaseConfig) (*pgxpool.Pool, err
 // EnsureEmbeddingDim checks that the vector column dimensions match the
 // configured embedding_dim and alters them if needed. This is a startup
 // operation — it drops and recreates HNSW indexes.
+//
+// It uses a PostgreSQL advisory lock to prevent concurrent callers from
+// racing on index drop/create (important during parallel test runs).
 func EnsureEmbeddingDim(ctx context.Context, pool *pgxpool.Pool, dim int) error {
 	if dim <= 0 {
 		return nil // use whatever the schema has
 	}
 
+	// Acquire an advisory lock so concurrent callers don't race.
+	// Lock ID is a stable hash of "ivy_embedding_dim".
+	const lockID = 20240516
+	_, err := pool.Exec(ctx, `SELECT pg_advisory_lock($1)`, lockID)
+	if err != nil {
+		return fmt.Errorf("acquiring advisory lock: %w", err)
+	}
+	defer func() { _, _ = pool.Exec(ctx, `SELECT pg_advisory_unlock($1)`, lockID) }()
+
 	// Check current dimension of the skills.embedding column
 	var currentDim int
-	err := pool.QueryRow(ctx, `
+	err = pool.QueryRow(ctx, `
 		SELECT a.atttypmod
 		FROM pg_attribute a
 		JOIN pg_class c ON a.attrelid = c.oid
@@ -49,11 +61,10 @@ func EnsureEmbeddingDim(ctx context.Context, pool *pgxpool.Pool, dim int) error 
 		return fmt.Errorf("checking vector dimension: %w", err)
 	}
 
-	// pgvector stores dim as atttypmod where actual_dim = atttypmod - 4
-	// (varlena overhead). If atttypmod is -1, the column type isn't set.
+	// pgvector stores the dimension directly in atttypmod.
+	// If atttypmod is -1, the column type isn't set.
 	if currentDim != -1 {
-		actualDim := currentDim - 4
-		if actualDim == dim {
+		if currentDim == dim {
 			return nil // already correct
 		}
 	}
@@ -77,8 +88,8 @@ func EnsureEmbeddingDim(ctx context.Context, pool *pgxpool.Pool, dim int) error 
 
 	// Recreate indexes
 	indexSQL := `
-		CREATE INDEX skills_embedding_idx ON skills USING hnsw (embedding vector_cosine_ops);
-		CREATE INDEX knowledge_entries_embedding_idx ON knowledge_entries USING hnsw (embedding vector_cosine_ops);
+		CREATE INDEX IF NOT EXISTS skills_embedding_idx ON skills USING hnsw (embedding vector_cosine_ops);
+		CREATE INDEX IF NOT EXISTS knowledge_entries_embedding_idx ON knowledge_entries USING hnsw (embedding vector_cosine_ops);
 	`
 	if _, err := pool.Exec(ctx, indexSQL); err != nil {
 		return fmt.Errorf("recreating embedding indexes: %w", err)
