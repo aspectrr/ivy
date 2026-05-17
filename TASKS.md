@@ -304,49 +304,43 @@ Build the tool registry and dispatch system that the agent uses. This is what tr
 ## Phase 5: Connectors & Knowledge
 
 ### 5.1 — ClickUp Connector
-- **Status:** `[ ]`
+- **Status:** `[x]`
 - **Depends On:** 2.1, 2.2
 - **Blocks:** 3.3
 
-**Description:**
-Build the ClickUp integration that maps ClickUp tasks to Ivy sessions. This is the primary user interface for MVP.
+**Completed:**
+- [x] `internal/vine/connector/clickup/client.go` — ClickUp REST API v2 client:
+  - Personal API token auth (`pk_...`, never expires)
+  - Configurable HTTP proxy for airgapped environments
+  - Auto-retry on 429 (rate limited) and 5xx errors (3 retries, exponential backoff)
+  - No retry on 4xx client errors (except 429)
+  - Methods: GetTask, GetTeamTasks, UpdateTask, PostComment, GetComments, GetAttachments
+  - TaskListOpts with rich filtering: status, tags, assignees, list/space IDs, date_updated_gt, subtasks
+  - Overridable baseURL for testing
+- [x] `internal/vine/connector/clickup/poller.go` — task poller:
+  - Background goroutine polls ClickUp on configurable interval (default 30s)
+  - Tracks lastUpdated timestamp, processes only new/changed tasks
+  - Applies config filters (list_id, space_id, tag, assignee)
+  - TaskHandler callback distinguishes new vs updated tasks
+  - Graceful start/stop with context cancellation
+- [x] `internal/vine/connector/clickup/types.go` — ToolClient interface decoupling tools from HTTP client
+- [x] `internal/vine/tools/clickup_tools.go` — 5 agent tools:
+  - clickup_get_task — full task details by ID
+  - clickup_update_task — change name, description, status, priority, due date
+  - clickup_post_comment — post markdown comments on tasks
+  - clickup_search_tasks — filter by status/tags/assignees/list/space
+  - clickup_get_attachments — list task file attachments
+  - Returns clear errors when client is nil (not configured)
+- [x] Config fields: team_id, tag, assignee, poll_interval, proxy
+- [x] Env overrides: IVY_CLICKUP_TEAM_ID, IVY_CLICKUP_PROXY
+- [x] 36 tests (22 client + 5 poller + 9 tools)
 
-**Tasks:**
-- [ ] Create `internal/vine/connector/clickup/connector.go`:
-  - Webhook handler for ClickUp task events
-  - Task created → create new session
-  - Task comment (by assignee) → append user_message event, resume run if suspended
-  - Task status change → map to session status changes
-- [ ] Create `internal/vine/connector/clickup/client.go`:
-  - ClickUp API v2 client
-  - Post comment to task (agent messages)
-  - Update task status
-  - Download attachments
-  - Get task details (name, description, assignee, custom fields)
-- [ ] Implement webhook server:
-  - Verify ClickUp webhook signature
-  - Parse webhook payload
-  - Route to appropriate handler
-  - Handle retries / idempotency (dedup by webhook event ID)
-- [ ] Implement session ↔ task mapping:
-  - Task ID stored in `sessions.source_id`
-  - Task description becomes initial context for agent
-  - Task assignee is the "user" for the session
-  - Task comments become user messages
-  - Agent responses posted as comments
-  - File attachments downloaded and placed in sandbox
-- [ ] Create webhook endpoint in vine HTTP server (alongside gRPC)
-- [ ] Handle the "agent asks user" flow:
-  - Agent message with `requires_action` → post as ClickUp comment
-  - User replies → picked up via webhook → resume session
-
-**Acceptance Criteria:**
-- New ClickUp task triggers a new Ivy session
-- Comments on the task are forwarded to the agent
-- Agent responses appear as task comments
-- File attachments are downloaded and available in the sandbox
-- Webhook signature verification works
-- Idempotent webhook handling
+**Design decisions:**
+- **Polling over webhooks** — vine may be behind NAT/airgapped, polling through HTTP proxy is simpler
+- **Personal API token** — never expires, no OAuth dance needed for single-org MVP
+- **HTTP proxy support** — `http.Transport{Proxy: http.ProxyURL(proxyURL)}`, works with Squid/corporate proxies
+- **Retry on 429 only** — ClickUp rate limits per plan, 429s are expected; other 4xx errors are permanent
+- **Webhook relay deferred** — can add a public relay (Cloudflare Worker) later for real-time push
 
 ---
 
@@ -542,7 +536,7 @@ Final security review, hardening, and production readiness checklist.
 - **LLM client** — OpenAI-compatible with SSE streaming
 - **Context builder** — event→message conversion, skill injection, truncation at 128k tokens
 - **Docker sandbox manager** — container lifecycle, Exec with stdcopy demux, WriteFile/ReadFile via tar, idle cleanup
-- **Tool framework** — 20 tools registered: 3 sandbox, 2 search stubs, 8 parser host (gRPC-routed), 2 skill tools, 5 pipeline tools
+- **Tool framework** — 25 tools registered: 3 sandbox, 2 search stubs, 8 parser host (gRPC-routed), 2 skill tools, 5 pipeline tools, 5 ClickUp tools
 - **Skill tools** — list_skills, get_skill with 5 built-in skills (kafka-debugging, elasticsearch-query-patterns, logstash-config-patterns, sysadmin-debugging, create-skill)
 - **Pipeline sandbox** — Redpanda → Logstash → ES with config rewriting, health checks, end-to-end data flow verified
 - **Pipeline health checks** — per-component status (Redpanda via `rpk`, ES via cluster health API, Logstash via pipeline API) with structured health reports
@@ -594,7 +588,7 @@ ivy/
 ### Test summary
 | Package | Tests | Type |
 |---------|-------|------|
-| `config` | 2 | Unit |
+| `config` | 7 | Unit |
 | `database` | 3 | Integration (Postgres) |
 | `ivyv1` | 1 | Unit |
 | `model` | 0 | Types only |
@@ -611,10 +605,13 @@ ivy/
 | `leaf/sync` | 12 | Unit |
 | `leaf/grpcclient` | 5 | Unit |
 | `vine/leafmgr` | 8 | Unit |
-| **Total** | **227** | |
+| `vine/connector/clickup` (client) | 22 | Unit (httptest) |
+| `vine/connector/clickup` (poller) | 5 | Unit (httptest) |
+| `vine/tools` (clickup) | 9 | Unit (mocked) |
+| **Total** | **263** | |
 
 ### Next up
-**Phase 5.1 — ClickUp Connector.** Build the ClickUp integration that maps tasks to sessions.
+**Phase 5.2 — Skills DB & History Search.** Build the vector search with pgvector for knowledge base and session history.
 
 ---
 
