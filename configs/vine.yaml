@@ -34,7 +34,12 @@ sandbox:
 connectors:
   clickup:
     enabled: false
-    webhook_secret: "" # Set via IVY_CLICKUP_WEBHOOK_SECRET env var
     api_token: "" # Set via IVY_CLICKUP_API_TOKEN env var
-    list_id: ""
-    space_id: ""
+    team_id: "" # Set via IVY_CLICKUP_TEAM_ID env var
+    list_id: "" # Restrict to a specific list (optional)
+    space_id: "" # Restrict to a specific space (optional)
+    tag: "" # Only process tasks with this tag (optional)
+    assignee: "" # Only process tasks assigned to this user ID (optional)
+    poll_interval: "30s"
+    proxy: "" # HTTP proxy URL, e.g. http://proxy.corp.internal:3128 (optional)
+    webhook_secret: "" # Set via IVY_CLICKUP_WEBHOOK_SECRET env var

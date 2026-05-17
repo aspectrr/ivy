@@ -67,11 +67,16 @@ type ConnectorsConfig struct {
 }
 
 type ClickUpConfig struct {
-	Enabled       bool   `yaml:"enabled"`
-	WebhookSecret string `yaml:"webhook_secret"`
-	APIToken      string `yaml:"api_token"`
-	ListID        string `yaml:"list_id"`
-	SpaceID       string `yaml:"space_id"`
+	Enabled       bool          `yaml:"enabled"`
+	APIToken      string        `yaml:"api_token"`
+	TeamID        string        `yaml:"team_id"`
+	ListID        string        `yaml:"list_id"`
+	SpaceID       string        `yaml:"space_id"`
+	Tag           string        `yaml:"tag"`
+	Assignee      string        `yaml:"assignee"`
+	PollInterval  time.Duration `yaml:"poll_interval"`
+	Proxy         string        `yaml:"proxy"`
+	WebhookSecret string        `yaml:"webhook_secret"`
 }
 
 // LoadHostdConfig loads the host daemon configuration from a YAML file.
@@ -99,6 +104,12 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if v := os.Getenv("IVY_CLICKUP_API_TOKEN"); v != "" {
 		cfg.Connectors.ClickUp.APIToken = v
+	}
+	if v := os.Getenv("IVY_CLICKUP_TEAM_ID"); v != "" {
+		cfg.Connectors.ClickUp.TeamID = v
+	}
+	if v := os.Getenv("IVY_CLICKUP_PROXY"); v != "" {
+		cfg.Connectors.ClickUp.Proxy = v
 	}
 
 	return cfg, nil

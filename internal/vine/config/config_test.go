@@ -47,8 +47,13 @@ connectors:
     enabled: true
     webhook_secret: "file-wh-secret"
     api_token: "file-api-token"
+    team_id: "team789"
     list_id: "list123"
     space_id: "space456"
+    tag: "ivy"
+    assignee: "user1"
+    poll_interval: "30s"
+    proxy: "http://proxy.corp.internal:3128"
 `)
 
 	if err := os.WriteFile(cfgPath, content, 0644); err != nil {
@@ -110,6 +115,15 @@ connectors:
 	}
 	if cfg.Connectors.ClickUp.ListID != "list123" {
 		t.Errorf("Connectors.ClickUp.ListID = %q, want list123", cfg.Connectors.ClickUp.ListID)
+	}
+	if cfg.Connectors.ClickUp.TeamID != "team789" {
+		t.Errorf("Connectors.ClickUp.TeamID = %q, want team789", cfg.Connectors.ClickUp.TeamID)
+	}
+	if cfg.Connectors.ClickUp.Tag != "ivy" {
+		t.Errorf("Connectors.ClickUp.Tag = %q, want ivy", cfg.Connectors.ClickUp.Tag)
+	}
+	if cfg.Connectors.ClickUp.Proxy != "http://proxy.corp.internal:3128" {
+		t.Errorf("Connectors.ClickUp.Proxy = %q, want http://proxy.corp.internal:3128", cfg.Connectors.ClickUp.Proxy)
 	}
 }
 
