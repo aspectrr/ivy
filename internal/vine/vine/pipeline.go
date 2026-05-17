@@ -14,6 +14,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 )
 
@@ -381,6 +382,291 @@ func (ps *PipelineSandbox) UpdateLogstashConfig(ctx context.Context, config stri
 	}
 
 	return nil
+}
+
+// --- Internal helpers ---
+
+// ComponentHealth describes the health of a single pipeline component.
+type ComponentHealth struct {
+	Name    string          `json:"name"`
+	Status  string          `json:"status"` // "healthy", "degraded", "unhealthy", "unknown"
+	Message string          `json:"message,omitempty"`
+	Details json.RawMessage `json:"details,omitempty"`
+}
+
+// PipelineHealthReport is the overall health of the pipeline sandbox.
+type PipelineHealthReport struct {
+	SessionID  string            `json:"session_id"`
+	Overall    string            `json:"overall"` // "healthy", "degraded", "unhealthy"
+	Components []ComponentHealth `json:"components"`
+}
+
+// Health returns a full health report for the pipeline sandbox.
+// It checks Redpanda, Elasticsearch, and Logstash independently.
+func (ps *PipelineSandbox) Health(ctx context.Context) (*PipelineHealthReport, error) {
+	ps.LastUsedAt = time.Now()
+
+	report := &PipelineHealthReport{
+		SessionID:  ps.SessionID,
+		Components: make([]ComponentHealth, 0, 3),
+	}
+
+	// Check each component, collecting errors but not aborting early.
+	allHealthy := true
+
+	rpHealth := ps.checkRedpanda(ctx)
+	report.Components = append(report.Components, rpHealth)
+	if rpHealth.Status != "healthy" {
+		allHealthy = false
+	}
+
+	esHealth := ps.checkElasticsearch(ctx)
+	report.Components = append(report.Components, esHealth)
+	if esHealth.Status != "healthy" {
+		allHealthy = false
+	}
+
+	lsHealth := ps.checkLogstash(ctx)
+	report.Components = append(report.Components, lsHealth)
+	if lsHealth.Status != "healthy" {
+		allHealthy = false
+	}
+
+	if allHealthy {
+		report.Overall = "healthy"
+	} else {
+		// If at least one component is healthy, it's degraded, not fully unhealthy.
+		healthyCount := 0
+		for _, c := range report.Components {
+			if c.Status == "healthy" {
+				healthyCount++
+			}
+		}
+		if healthyCount > 0 {
+			report.Overall = "degraded"
+		} else {
+			report.Overall = "unhealthy"
+		}
+	}
+
+	return report, nil
+}
+
+// checkRedpanda checks Redpanda health via `rpk cluster health`.
+func (ps *PipelineSandbox) checkRedpanda(ctx context.Context) ComponentHealth {
+	health := ComponentHealth{Name: "redpanda"}
+
+	// First check container is running.
+	inspect, err := ps.cli.ContainerInspect(ctx, ps.RedpandaContainerID)
+	if err != nil {
+		health.Status = "unknown"
+		health.Message = fmt.Sprintf("container inspect failed: %v", err)
+		return health
+	}
+	if inspect.State == nil || !inspect.State.Running {
+		status := "stopped"
+		if inspect.State != nil {
+			status = inspect.State.Status
+		}
+		health.Status = "unhealthy"
+		health.Message = fmt.Sprintf("container not running (status: %s)", status)
+		return health
+	}
+
+	// Run `rpk cluster health` for a detailed check.
+	execResp, err := ps.cli.ContainerExecCreate(ctx, ps.RedpandaContainerID, container.ExecOptions{
+		Cmd:          []string{"rpk", "cluster", "health"},
+		AttachStdout: true,
+		AttachStderr: true,
+	})
+	if err != nil {
+		health.Status = "unknown"
+		health.Message = fmt.Sprintf("exec create failed: %v", err)
+		return health
+	}
+
+	attachResp, err := ps.cli.ContainerExecAttach(ctx, execResp.ID, container.ExecStartOptions{})
+	if err != nil {
+		health.Status = "unknown"
+		health.Message = fmt.Sprintf("exec attach failed: %v", err)
+		return health
+	}
+	defer attachResp.Close()
+
+	var stdoutBuf, stderrBuf bytes.Buffer
+	if _, err := stdcopy.StdCopy(&stdoutBuf, &stderrBuf, attachResp.Reader); err != nil {
+		health.Status = "unknown"
+		health.Message = fmt.Sprintf("reading output failed: %v", err)
+		return health
+	}
+
+	execInspect, err := ps.cli.ContainerExecInspect(ctx, execResp.ID)
+	if err != nil || execInspect.ExitCode != 0 {
+		exitCode := -1
+		if err == nil {
+			exitCode = execInspect.ExitCode
+		}
+		health.Status = "unhealthy"
+		health.Message = fmt.Sprintf("rpk cluster health exited %d: %s", exitCode, stderrBuf.String())
+		return health
+	}
+
+	health.Status = "healthy"
+	health.Message = "redpanda broker is running and accepting connections"
+
+	// Parse the output as structured details.
+	output := strings.TrimSpace(stdoutBuf.String())
+	if output != "" {
+		lines := strings.Split(output, "\n")
+		details := make(map[string]string, len(lines))
+		for _, line := range lines {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				details[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+			}
+		}
+		if len(details) > 0 {
+			_ = json.Unmarshal([]byte("{}"), &health.Details) // ensure non-nil
+			health.Details, _ = json.Marshal(details)
+		}
+	}
+
+	return health
+}
+
+// checkElasticsearch checks ES health via the _cluster/health API.
+func (ps *PipelineSandbox) checkElasticsearch(ctx context.Context) ComponentHealth {
+	health := ComponentHealth{Name: "elasticsearch"}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, "GET", ps.ESAddr+"/_cluster/health", nil)
+	if err != nil {
+		health.Status = "unknown"
+		health.Message = fmt.Sprintf("creating request: %v", err)
+		return health
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		health.Status = "unhealthy"
+		health.Message = fmt.Sprintf("connection failed: %v", err)
+		return health
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		health.Status = "unknown"
+		health.Message = fmt.Sprintf("reading response: %v", err)
+		return health
+	}
+
+	health.Details = json.RawMessage(body)
+
+	if resp.StatusCode != 200 {
+		health.Status = "unhealthy"
+		health.Message = fmt.Sprintf("ES returned status %d", resp.StatusCode)
+		return health
+	}
+
+	// Parse key fields.
+	var esHealth struct {
+		Status           string `json:"status"`
+		NumberOfNodes    int    `json:"number_of_nodes"`
+		ActiveShards     int    `json:"active_shards"`
+		UnassignedShards int    `json:"unassigned_shards"`
+	}
+	if err := json.Unmarshal(body, &esHealth); err != nil {
+		health.Status = "degraded"
+		health.Message = "could not parse cluster health response"
+		return health
+	}
+
+	switch esHealth.Status {
+	case "green":
+		health.Status = "healthy"
+		health.Message = fmt.Sprintf("cluster is green (%d nodes, %d shards)", esHealth.NumberOfNodes, esHealth.ActiveShards)
+	case "yellow":
+		health.Status = "degraded"
+		health.Message = fmt.Sprintf("cluster is yellow (%d unassigned shards)", esHealth.UnassignedShards)
+	case "red":
+		health.Status = "unhealthy"
+		health.Message = fmt.Sprintf("cluster is red (%d unassigned shards)", esHealth.UnassignedShards)
+	default:
+		health.Status = "unknown"
+		health.Message = fmt.Sprintf("unexpected cluster status: %s", esHealth.Status)
+	}
+
+	return health
+}
+
+// checkLogstash checks Logstash container health via container state and log inspection.
+func (ps *PipelineSandbox) checkLogstash(ctx context.Context) ComponentHealth {
+	health := ComponentHealth{Name: "logstash"}
+
+	// Check container is running.
+	inspect, err := ps.cli.ContainerInspect(ctx, ps.LogstashContainerID)
+	if err != nil {
+		health.Status = "unknown"
+		health.Message = fmt.Sprintf("container inspect failed: %v", err)
+		return health
+	}
+	if inspect.State == nil || !inspect.State.Running {
+		status := "stopped"
+		if inspect.State != nil {
+			status = inspect.State.Status
+		}
+		health.Status = "unhealthy"
+		health.Message = fmt.Sprintf("container not running (status: %s)", status)
+		return health
+	}
+
+	// Check if Logstash API is responding.
+	// Logstash listens on port 9600 inside the container network.
+	sb := &Sandbox{ID: ps.LogstashContainerID, cli: ps.cli}
+	result, err := sb.Exec(ctx, "bash", "-c", "curl -sf http://localhost:9600/_node/pipelines/main 2>&1 || echo 'api-unavailable'")
+	if err != nil {
+		health.Status = "degraded"
+		health.Message = fmt.Sprintf("exec failed: %v", err)
+		return health
+	}
+
+	if result.ExitCode != 0 || strings.Contains(result.Stdout, "api-unavailable") {
+		health.Status = "degraded"
+		health.Message = "Logstash API not responding (still starting up?)"
+		return health
+	}
+
+	// Parse pipeline status from the API response.
+	var pipelineInfo struct {
+		Pipelines struct {
+			Main struct {
+				Status string `json:"status"`
+				Events struct {
+					Filtered int64 `json:"filtered"`
+					Output   int64 `json:"out"`
+				} `json:"events"`
+			} `json:"main"`
+		} `json:"pipelines"`
+	}
+
+	if err := json.Unmarshal([]byte(result.Stdout), &pipelineInfo); err == nil {
+		mainPipe := pipelineInfo.Pipelines.Main
+		if mainPipe.Status == "running" {
+			health.Status = "healthy"
+			health.Message = fmt.Sprintf("pipeline running (filtered: %d, output: %d)",
+				mainPipe.Events.Filtered, mainPipe.Events.Output)
+		} else {
+			health.Status = "degraded"
+			health.Message = fmt.Sprintf("pipeline status: %s", mainPipe.Status)
+		}
+	} else {
+		// API responded but we couldn't parse it — still better than nothing.
+		health.Status = "healthy"
+		health.Message = "Logstash is running and API is responding"
+	}
+
+	return health
 }
 
 // --- Internal helpers ---

@@ -21,6 +21,7 @@ func TestPipelineToolsRegistered(t *testing.T) {
 		"pipeline_query_es",
 		"pipeline_get_logstash_status",
 		"pipeline_update_config",
+		"pipeline_health",
 	}
 
 	for _, name := range expectedTools {
@@ -84,6 +85,19 @@ func TestPipelineUpdateConfigNoProvider(t *testing.T) {
 
 	_, err := reg.Execute(context.Background(), "pipeline_update_config",
 		json.RawMessage(`{"config":"input { kafka {} } output { elasticsearch {} }"}`),
+		ToolContext{SessionID: "test-session"},
+	)
+	if err == nil {
+		t.Fatal("expected error with nil provider")
+	}
+}
+
+func TestPipelineHealthNoProvider(t *testing.T) {
+	reg := NewRegistry()
+	_ = RegisterPipelineTools(reg, nil)
+
+	_, err := reg.Execute(context.Background(), "pipeline_health",
+		json.RawMessage(`{}`),
 		ToolContext{SessionID: "test-session"},
 	)
 	if err == nil {

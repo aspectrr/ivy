@@ -224,6 +224,42 @@ func (t *PipelineUpdateConfigTool) Execute(ctx context.Context, args json.RawMes
 	})
 }
 
+// --- pipeline_health ---
+
+type PipelineHealthTool struct {
+	Provider PipelineProvider
+}
+
+func (t *PipelineHealthTool) Definition() ToolDef {
+	return ToolDef{
+		Name:        "pipeline_health",
+		Description: "Check the health of all pipeline components (Redpanda, Elasticsearch, Logstash). Returns per-component status and an overall health assessment.",
+		Parameters: json.RawMessage(`{
+			"type": "object",
+			"properties": {},
+			"required": []
+		}`),
+	}
+}
+
+func (t *PipelineHealthTool) Execute(ctx context.Context, _ json.RawMessage, tctx ToolContext) (json.RawMessage, error) {
+	if t.Provider == nil {
+		return nil, fmt.Errorf("pipeline not available")
+	}
+
+	ps, err := t.Provider.GetPipeline(tctx.SessionID)
+	if err != nil {
+		return nil, fmt.Errorf("no pipeline sandbox for session: %w", err)
+	}
+
+	report, err := ps.Health(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("health check failed: %w", err)
+	}
+
+	return json.Marshal(report)
+}
+
 // RegisterPipelineTools registers all pipeline tools.
 func RegisterPipelineTools(registry *Registry, provider PipelineProvider) error {
 	tools := []Tool{
@@ -231,6 +267,7 @@ func RegisterPipelineTools(registry *Registry, provider PipelineProvider) error 
 		&PipelineQueryESTool{Provider: provider},
 		&PipelineGetLogstashStatusTool{Provider: provider},
 		&PipelineUpdateConfigTool{Provider: provider},
+		&PipelineHealthTool{Provider: provider},
 	}
 	for _, tool := range tools {
 		if err := registry.Register(tool); err != nil {
