@@ -50,6 +50,7 @@ type LLMConfig struct {
 	APIKey         string `yaml:"api_key"`
 	DefaultModel   string `yaml:"default_model"`
 	EmbeddingModel string `yaml:"embedding_model"`
+	EmbeddingDim   int    `yaml:"embedding_dim"`
 }
 
 type SandboxConfig struct {
@@ -110,6 +111,12 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if v := os.Getenv("IVY_CLICKUP_PROXY"); v != "" {
 		cfg.Connectors.ClickUp.Proxy = v
+	}
+	if v := os.Getenv("IVY_EMBEDDING_DIM"); v != "" {
+		var dim int
+		if _, err := fmt.Sscanf(v, "%d", &dim); err == nil && dim > 0 {
+			cfg.LLM.EmbeddingDim = dim
+		}
 	}
 
 	return cfg, nil

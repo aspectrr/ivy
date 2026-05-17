@@ -32,6 +32,7 @@ llm:
   api_key: "file-key"
   default_model: "gpt-4o"
   embedding_model: "text-embedding-ada-002"
+  embedding_dim: 768
 
 sandbox:
   docker_host: "unix:///var/run/docker.sock"
@@ -99,6 +100,9 @@ connectors:
 	}
 	if cfg.LLM.DefaultModel != "gpt-4o" {
 		t.Errorf("LLM.DefaultModel = %q, want gpt-4o", cfg.LLM.DefaultModel)
+	}
+	if cfg.LLM.EmbeddingDim != 768 {
+		t.Errorf("LLM.EmbeddingDim = %d, want 768", cfg.LLM.EmbeddingDim)
 	}
 
 	// Sandbox
@@ -169,6 +173,7 @@ connectors:
 	t.Setenv("IVY_LLM_API_KEY", "env-llm-key")
 	t.Setenv("IVY_CLICKUP_WEBHOOK_SECRET", "env-wh-secret")
 	t.Setenv("IVY_CLICKUP_API_TOKEN", "env-cu-token")
+	t.Setenv("IVY_EMBEDDING_DIM", "768")
 
 	cfg, err := LoadConfig(cfgPath)
 	if err != nil {
@@ -186,6 +191,9 @@ connectors:
 	}
 	if cfg.Connectors.ClickUp.APIToken != "env-cu-token" {
 		t.Errorf("ClickUp.APIToken = %q, want env-cu-token", cfg.Connectors.ClickUp.APIToken)
+	}
+	if cfg.LLM.EmbeddingDim != 768 {
+		t.Errorf("LLM.EmbeddingDim = %d, want 768", cfg.LLM.EmbeddingDim)
 	}
 }
 

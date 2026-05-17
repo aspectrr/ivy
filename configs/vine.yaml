@@ -21,6 +21,7 @@ llm:
   api_key: "" # Set via IVY_LLM_API_KEY env var
   default_model: "gpt-4o"
   embedding_model: "text-embedding-ada-002"
+  embedding_dim: 1536 # Must match embedding model output (OpenAI=1536, nomic-embed-text=768)
 
 sandbox:
   docker_host: "unix:///var/run/docker.sock"
