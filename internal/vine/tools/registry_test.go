@@ -127,7 +127,7 @@ func TestRegisterSearchTools(t *testing.T) {
 
 func TestRegisterParserTools(t *testing.T) {
 	reg := NewRegistry()
-	if err := RegisterParserTools(reg); err != nil {
+	if err := RegisterParserTools(reg, nil); err != nil {
 		t.Fatalf("RegisterParserTools: %v", err)
 	}
 
@@ -150,7 +150,7 @@ func TestRegisterAllTools(t *testing.T) {
 	if err := RegisterSearchTools(reg); err != nil {
 		t.Fatalf("search: %v", err)
 	}
-	if err := RegisterParserTools(reg); err != nil {
+	if err := RegisterParserTools(reg, nil); err != nil {
 		t.Fatalf("parser: %v", err)
 	}
 
@@ -164,7 +164,7 @@ func TestToolDefinitionsHaveSchema(t *testing.T) {
 	reg := NewRegistry()
 	_ = RegisterSandboxTools(reg)
 	_ = RegisterSearchTools(reg)
-	_ = RegisterParserTools(reg)
+	_ = RegisterParserTools(reg, nil)
 
 	for _, def := range reg.List() {
 		if def.Name == "" {
