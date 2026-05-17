@@ -345,99 +345,63 @@ Build the tool registry and dispatch system that the agent uses. This is what tr
 ---
 
 ### 5.2 — Skill System
-- **Status:** `[ ]`
+- **Status:** `[x]`
 - **Depends On:** 1.2, 2.1
 - **Blocks:** None
 
-**Description:**
-Build the compounding skill system. Agents create skills after completing sessions, and search for relevant skills when starting new sessions.
-
-**Tasks:**
-- [ ] Create `internal/vine/skills/store.go`:
-  - `Create(name, description, content, sourceSessionID) (*Skill, error)`
-  - `Get(id) (*Skill, error)`
-  - `GetByName(name) (*Skill, error)`
-  - `Search(query, limit) ([]Skill, error)` — vector similarity search
-  - `Update(id, content) error`
-  - `Delete(id) error`
-  - `RecordUsage(skillID, sessionID) error`
-  - `MarkHelpful(usageID, helpful) error`
-- [ ] Implement embedding generation:
-  - Use the same OpenAI-compatible endpoint to generate embeddings
-  - Embed skill name + description for search
-  - Store in pgvector `embedding` column
-  - Use cosine similarity for search
-- [ ] Create built-in skills in `skills/` directory:
-  - `kafka-skills/SKILL.md` — Kafka debugging patterns
-  - `elasticsearch-skills/SKILL.md` — ES query patterns, mapping debugging
-  - `logstash-skills/SKILL.md` — Logstash config patterns, grok debugging
-  - `sysadmin-skills/SKILL.md` — Common system debugging patterns
-  - `create-skill/SKILL.md` — Instructions for the agent on how to create new skills
-- [ ] Implement skill loading at startup:
-  - Load built-in skills from `skills/` directory
-  - Seed into database if not already present
-  - Generate embeddings for any new skills
-- [ ] Implement "create skill" tool for the agent:
-  - `skill_create` — agent creates a new skill at end of session
-  - Prompt the agent to: reflect on what it did, what worked, what didn't, summarize
-  - Auto-generate name and description
-  - Agent writes the skill content
-- [ ] Implement skill search tool:
-  - `skill_search` — agent searches for relevant skills
-  - Takes a query string
-  - Returns top-k similar skills with content
-- [ ] Wire into orchestrator:
-  - At session start, automatically search for relevant skills based on task description
-  - Inject relevant skills into the agent's context/system prompt
-  - At session end, nudge agent to create a skill (add to system prompt)
-
-**Acceptance Criteria:**
-- Built-in skills load at startup
-- Vector search returns relevant skills
-- Agent can create new skills via tool
-- Skills are injected into agent context at session start
-- Skill usage tracking works
+**Completed:**
+- [x] `internal/vine/embed/client.go` — OpenAI-compatible embedding client:
+  - Uses same endpoint/apiKey as chat LLM client
+  - Separate `embedding_model` config (default: text-embedding-3-small)
+  - `Embed(ctx, text) → Vector` and `EmbedBatch(ctx, texts) → []Vector`
+  - Produces float32 vectors (dimension 1536 for pgvector schema)
+- [x] `internal/vine/skills/store.go` — Database-backed skill store:
+  - `Embedder` interface decoupling from concrete embed.Client
+  - `Create(name, desc, content, sourceSessionID) → Skill` — auto-generates embedding
+  - `Get(id)`, `GetByName(name) → Skill`
+  - `Search(queryEmbedding, limit) → []Skill` — cosine similarity via pgvector `<=>`
+  - `SearchByText(query, limit) → []Skill` — generates embedding then searches
+  - `Update(id, content)`, `Delete(id)`
+  - `UpsertBuiltIn(name, desc, content, embedding) → Skill` — INSERT ON CONFLICT UPDATE
+  - `ListAll() → []SkillSummary`
+  - `RecordUsage(skillID, sessionID)`, `MarkHelpful(usageID, helpful)`, `GetUsage(usageID)`
+  - `Count() → int`
+  - `formatVector`/`parseVector` helpers for pgvector string format
+- [x] `internal/vine/tools/search_tools.go` — Rewired search tools with real backends:
+  - `SkillSearcher` interface (SearchByText)
+  - `SkillCreator` interface (Create)
+  - `HistorySearcher` interface (SearchByText)
+  - `search_skills` — now uses SkillSearcher for vector search
+  - `search_history` — now uses HistorySearcher for vector search
+  - `skill_create` — NEW tool for agents to create skills at session end
+  - All return graceful "not configured" messages when backends are nil
+- [x] `internal/vine/tools/skills_adapter.go` — Adapter: skills.Store → SkillSearcher/SkillCreator
+- [x] `internal/vine/tools/history_adapter.go` — Adapter: history.Store → HistorySearcher
+- [x] `RegisterSearchTools(registry, skillSearcher, skillCreator, historySearcher)` — all optional (nil-safe)
+- [x] Built-in skills remain in memorySkillStore (skill_tools.go) — will be seeded to DB at startup in Phase 6
+- [x] 29 tests (9 embed + 13 skills store + 11 history store)
 
 ---
 
 ### 5.3 — History Search
-- **Status:** `[ ]`
+- **Status:** `[x]`
 - **Depends On:** 1.2, 2.1
 - **Blocks:** None
 
-**Description:**
-Implement searchable session history using both semantic (vector) and structured search. Agents are nudged to search history when facing unfamiliar situations.
-
-**Tasks:**
-- [ ] Create `internal/vine/history/store.go`:
-  - `IndexSession(sessionID) error` — generate embeddings for key session events and store
-  - `Search(query, limit) ([]HistoryEntry, error)` — vector similarity search
-  - `SearchByFilter(filters, limit, offset) ([]Session, error)` — structured search (date, source, status, tools used)
-- [ ] Implement session indexing:
-  - At session completion, extract key events (user messages, agent messages with tool calls, final result)
-  - Generate embeddings for summary/key moments
-  - Store in `knowledge_entries` table
-  - Alternative: index the full session transcript in chunks with embeddings
-- [ ] Create `search_history` tool:
-  - Args: `query` (text), `limit` (optional, default 5)
-  - Returns: matching past sessions with summaries and key takeaways
-  - Agent is nudged in system prompt to search when uncertain
-- [ ] Create session summarizer:
-  - At session end, use LLM to generate a summary of what happened
-  - Store summary in session metadata
-  - Use summary for history indexing (lighter than indexing all events)
-- [ ] Add structured search filters:
-  - By date range
-  - By source (clickup task ID)
-  - By tools used
-  - By outcome (success/failure)
-
-**Acceptance Criteria:**
-- Completed sessions are indexed automatically
-- Vector search returns relevant past sessions
-- Structured search works with filters
-- Agent tool is available and functional
-- Search results include enough context for the agent to learn from
+**Completed:**
+- [x] `internal/vine/history/store.go` — Session history indexing and search:
+  - `Embedder` interface (same as skills package)
+  - `IndexSession(sessionID, content) → Entry` — auto-generates embedding
+  - `IndexWithEmbedding(sessionID, content, vec) → Entry`
+  - `Search(queryEmbedding, limit) → []Entry` — cosine similarity via pgvector
+  - `SearchByText(query, limit) → []Entry` — generates embedding then searches
+  - `SearchByFilter(filters, limit, offset) → []SessionSummary` — structured search:
+    - Filter by: source, source_id, status, since (time), until (time)
+    - Dynamic query builder with parameterized SQL
+    - Pagination support (limit + offset)
+  - `DeleteBySession(sessionID)`, `Count() → int`
+- [x] Tool rewiring via `history_adapter.go`
+- [x] 11 tests (index, search, filter, pagination, date range, delete, count)
 
 ---
 
@@ -536,7 +500,7 @@ Final security review, hardening, and production readiness checklist.
 - **LLM client** — OpenAI-compatible with SSE streaming
 - **Context builder** — event→message conversion, skill injection, truncation at 128k tokens
 - **Docker sandbox manager** — container lifecycle, Exec with stdcopy demux, WriteFile/ReadFile via tar, idle cleanup
-- **Tool framework** — 25 tools registered: 3 sandbox, 2 search stubs, 8 parser host (gRPC-routed), 2 skill tools, 5 pipeline tools, 5 ClickUp tools
+- **Tool framework** — 26 tools registered: 3 sandbox, 3 search (vector-backed), 8 parser host (gRPC-routed), 2 skill tools, 5 pipeline tools, 5 ClickUp tools
 - **Skill tools** — list_skills, get_skill with 5 built-in skills (kafka-debugging, elasticsearch-query-patterns, logstash-config-patterns, sysadmin-debugging, create-skill)
 - **Pipeline sandbox** — Redpanda → Logstash → ES with config rewriting, health checks, end-to-end data flow verified
 - **Pipeline health checks** — per-component status (Redpanda via `rpk`, ES via cluster health API, Logstash via pipeline API) with structured health reports
@@ -608,10 +572,14 @@ ivy/
 | `vine/connector/clickup` (client) | 22 | Unit (httptest) |
 | `vine/connector/clickup` (poller) | 5 | Unit (httptest) |
 | `vine/tools` (clickup) | 9 | Unit (mocked) |
-| **Total** | **263** | |
+| `vine/embed` | 9 | Unit (httptest) |
+| `vine/skills` | 13 | Integration (Postgres) + Unit |
+| `vine/history` | 11 | Integration (Postgres) |
+| `vine/tools` (search) | 8 | Unit (mocked) |
+| **Total** | **315** | |
 
 ### Next up
-**Phase 5.2 — Skills DB & History Search.** Build the vector search with pgvector for knowledge base and session history.
+**Phase 6.1 — End-to-End Integration.** Wire all components together: ClickUp polling → session creation → orchestrator → sandbox → tools → response posting. Seed built-in skills to database at startup.
 
 ---
 

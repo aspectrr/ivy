@@ -84,7 +84,7 @@ func TestRegistryExecute(t *testing.T) {
 		t.Fatal("expected results array")
 	}
 	if len(results) != 0 {
-		t.Fatalf("expected 0 results (stub), got %d", len(results))
+		t.Fatalf("expected 0 results (not configured), got %d", len(results))
 	}
 }
 
@@ -113,11 +113,11 @@ func TestRegisterSandboxTools(t *testing.T) {
 
 func TestRegisterSearchTools(t *testing.T) {
 	reg := NewRegistry()
-	if err := RegisterSearchTools(reg); err != nil {
+	if err := RegisterSearchTools(reg, nil, nil, nil); err != nil {
 		t.Fatalf("RegisterSearchTools: %v", err)
 	}
 
-	expected := []string{"search_history", "search_skills"}
+	expected := []string{"search_history", "search_skills", "skill_create"}
 	for _, name := range expected {
 		if _, err := reg.Get(name); err != nil {
 			t.Fatalf("expected tool %s: %v", name, err)
@@ -147,7 +147,7 @@ func TestRegisterAllTools(t *testing.T) {
 	if err := RegisterSandboxTools(reg); err != nil {
 		t.Fatalf("sandbox: %v", err)
 	}
-	if err := RegisterSearchTools(reg); err != nil {
+	if err := RegisterSearchTools(reg, nil, nil, nil); err != nil {
 		t.Fatalf("search: %v", err)
 	}
 	if err := RegisterParserTools(reg, nil); err != nil {
@@ -155,15 +155,15 @@ func TestRegisterAllTools(t *testing.T) {
 	}
 
 	defs := reg.List()
-	if len(defs) != 13 { // 3 sandbox + 2 search + 8 parser
-		t.Fatalf("expected 13 total tools, got %d", len(defs))
+	if len(defs) != 14 { // 3 sandbox + 3 search + 8 parser
+		t.Fatalf("expected 14 total tools, got %d", len(defs))
 	}
 }
 
 func TestToolDefinitionsHaveSchema(t *testing.T) {
 	reg := NewRegistry()
 	_ = RegisterSandboxTools(reg)
-	_ = RegisterSearchTools(reg)
+	_ = RegisterSearchTools(reg, nil, nil, nil)
 	_ = RegisterParserTools(reg, nil)
 
 	for _, def := range reg.List() {
@@ -187,7 +187,7 @@ func TestToolDefinitionsHaveSchema(t *testing.T) {
 
 func TestSearchToolsDefaultLimit(t *testing.T) {
 	reg := NewRegistry()
-	_ = RegisterSearchTools(reg)
+	_ = RegisterSearchTools(reg, nil, nil, nil)
 
 	// Test with no limit specified.
 	result, err := reg.Execute(context.Background(), "search_history", json.RawMessage(`{"query":"test"}`), ToolContext{})
