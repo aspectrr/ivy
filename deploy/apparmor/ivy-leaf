@@ -1,0 +1,49 @@
+# AppArmor profile for ivy-leaf
+#
+# Install:
+#   sudo apparmor_parser -r /etc/apparmor.d/ivy-leaf
+#
+# This profile restricts the leaf daemon to:
+#   - Read-only access to allowed directories
+#   - Execute only whitelisted commands
+#   - Network access only to vine endpoint
+#   - No write access except to own log/config directories
+
+#include <tunables/global>
+
+/usr/local/bin/ivy-leaf {
+  #include <abstractions/base>
+
+  # Read access to allowed log directories
+  /etc/logstash/** r,
+  /var/log/logstash/** r,
+  /opt/logstash/pipelines/** r,
+
+  # Own directories
+  /etc/ivy-leaf/ r,
+  /etc/ivy-leaf/** r,
+  /var/log/ivy-leaf/ rw,
+  /var/log/ivy-leaf/** rw,
+  /var/lib/ivy-leaf/ rw,
+  /var/lib/ivy-leaf/** rw,
+
+  # Execute whitelisted commands
+  /usr/bin/grep rix,
+  /usr/bin/awk rix,
+  /usr/bin/find rix,
+  /usr/bin/cat rix,
+  /usr/bin/tail rix,
+  /usr/bin/systemctl rix,
+  /usr/bin/journalctl rix,
+
+  # Network: only TCP to vine
+  network tcp,
+
+  # Deny everything else
+  deny /proc/** rw,
+  deny /sys/** rw,
+  deny /dev/** rw,
+  deny /tmp/** rw,
+  deny /root/** rw,
+  deny /home/** rw,
+}

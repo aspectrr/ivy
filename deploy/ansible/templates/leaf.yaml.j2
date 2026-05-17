@@ -1,0 +1,22 @@
+# ivy-leaf config — managed by Ansible
+vine:
+  address: "{{ ivy_vine_address }}"
+  tls:
+    cert: "{{ ivy_cert_dir }}/client.pem"
+    key: "{{ ivy_cert_dir }}/client-key.pem"
+    ca: "{{ ivy_cert_dir }}/ca.pem"
+  reconnect_interval: "{{ ivy_vine_reconnect_interval }}"
+
+allowed_directories:
+{% for dir in ivy_leaf_allowed_dirs %}
+  - "{{ dir }}"
+{% endfor %}
+
+allowed_commands:
+{% for cmd in ivy_leaf_allowed_commands %}
+  - {{ cmd }}
+{% endfor %}
+
+max_concurrent_commands: {{ ivy_leaf_max_concurrent_commands }}
+command_timeout: "{{ ivy_leaf_command_timeout }}"
+log_level: "{{ ivy_leaf_log_level }}"

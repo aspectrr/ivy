@@ -1,0 +1,29 @@
+# ivy-leaf — Ivy Leaf Daemon Variables
+---
+ivy_version: "0.1.0"
+
+ivy_cert_dir: "/etc/ivy-leaf/certs"
+
+ivy_leaf_host_id: "{{ inventory_hostname_short }}"
+ivy_leaf_allowed_dirs:
+  - /etc/logstash
+  - /var/log/logstash
+
+ivy_leaf_allowed_commands:
+  - grep
+  - awk
+  - find
+  - cat
+  - tail
+  - systemctl
+  - journalctl
+
+ivy_leaf_max_concurrent_commands: 3
+ivy_leaf_command_timeout: "30s"
+ivy_leaf_log_level: "info"
+
+ivy_vine_address: "vine-01.internal:50051"
+ivy_vine_reconnect_interval: "5s"
+
+# Docker install toggle (for vine playbook)
+docker_install: true

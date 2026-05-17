@@ -1,0 +1,28 @@
+[Unit]
+Description=Ivy Leaf Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ivy-leaf
+Group=ivy-leaf
+ExecStart=/usr/local/bin/ivy-leaf --config /etc/ivy-leaf/config.yaml
+Restart=always
+RestartSec=10
+LimitNOFILE=65536
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/log/ivy-leaf /var/lib/ivy-leaf
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ivy-leaf
+
+[Install]
+WantedBy=multi-user.target

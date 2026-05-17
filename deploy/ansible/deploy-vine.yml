@@ -1,0 +1,127 @@
+# Deploy ivy-vine — the main Ivy daemon
+#
+# This playbook:
+#   1. Installs Docker if not present
+#   2. Creates the ivy system user
+#   3. Installs the vine binary
+#   4. Deploys mTLS certificates
+#   5. Installs config file
+#   6. Runs database migrations
+#   7. Pulls sandbox Docker images
+#   8. Installs and starts the systemd service
+#
+# Usage:
+#   ansible-playbook -i inventory.yml deploy-vine.yml
+
+- name: Deploy ivy-vine daemon
+  hosts: vine
+  become: true
+  vars_files:
+    - vars/main.yml
+
+  tasks:
+    - name: Install Docker
+      ansible.builtin.include_role:
+        name: geerlingguy.docker
+      when: docker_install | default(true)
+
+    - name: Create ivy system user
+      ansible.builtin.user:
+        name: ivy
+        system: true
+        shell: /usr/sbin/nologin
+        create_home: false
+        groups: docker
+        append: true
+        comment: "Ivy Vine Daemon"
+
+    - name: Create directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: ivy
+        group: ivy
+        mode: "0750"
+      loop:
+        - /etc/ivy
+        - /etc/ivy/certs
+        - /var/log/ivy
+        - /var/lib/ivy
+
+    - name: Install vine binary
+      ansible.builtin.copy:
+        src: "vine-{{ ivy_version }}-linux-{{ ansible_architecture }}"
+        dest: /usr/local/bin/ivy-vine
+        owner: root
+        group: root
+        mode: "0755"
+      notify: Restart ivy-vine
+
+    - name: Deploy mTLS certificates
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: ivy
+        group: ivy
+        mode: "0600"
+      loop:
+        - src: "certs/{{ inventory_hostname }}-server.pem"
+          dest: /etc/ivy/certs/server.pem
+        - src: "certs/{{ inventory_hostname }}-server-key.pem"
+          dest: /etc/ivy/certs/server-key.pem
+        - src: "certs/ca.pem"
+          dest: /etc/ivy/certs/ca.pem
+      notify: Restart ivy-vine
+
+    - name: Install config file
+      ansible.builtin.template:
+        src: vine.yaml.j2
+        dest: /etc/ivy/config.yaml
+        owner: ivy
+        group: ivy
+        mode: "0640"
+        validate: cat %s
+      notify: Restart ivy-vine
+
+    - name: Install systemd unit
+      ansible.builtin.template:
+        src: ivy-vine.service.j2
+        dest: /etc/systemd/system/ivy-vine.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Restart ivy-vine
+
+    - name: Run database migrations
+      ansible.builtin.command:
+        cmd: /usr/local/bin/ivy-vine --config /etc/ivy/config.yaml migrate-up
+        chdir: /var/lib/ivy
+      changed_when: true
+
+    - name: Pull sandbox Docker images
+      community.docker.docker_image:
+        name: "{{ item }}"
+        source: pull
+      loop:
+        - "docker.redpanda.com/redpandadata/redpanda:latest"
+        - "docker.elastic.co/elasticsearch/elasticsearch:8.17.0"
+        - "docker.elastic.co/logstash/logstash:8.17.0"
+        - "debian:bookworm-slim"
+
+    - name: Enable and start ivy-vine service
+      ansible.builtin.systemd:
+        name: ivy-vine
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart ivy-vine
+      ansible.builtin.systemd:
+        name: ivy-vine
+        state: restarted

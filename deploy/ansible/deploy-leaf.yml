@@ -1,0 +1,111 @@
+# Deploy ivy-leaf — the leaf daemon for log parser hosts
+#
+# This playbook:
+#   1. Creates the ivy-leaf system user
+#   2. Installs the leaf binary
+#   3. Deploys mTLS certificates
+#   4. Installs config file
+#   5. Installs and starts the systemd service
+#
+# Usage:
+#   ansible-playbook -i inventory.yml deploy-leaf.yml
+
+- name: Deploy ivy-leaf daemon
+  hosts: leaves
+  become: true
+  vars_files:
+    - vars/main.yml
+
+  tasks:
+    - name: Create ivy-leaf system user
+      ansible.builtin.user:
+        name: ivy-leaf
+        system: true
+        shell: /usr/sbin/nologin
+        create_home: false
+        comment: "Ivy Leaf Daemon"
+
+    - name: Create directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: ivy-leaf
+        group: ivy-leaf
+        mode: "0750"
+      loop:
+        - /etc/ivy-leaf
+        - /etc/ivy-leaf/certs
+        - /var/log/ivy-leaf
+        - /var/lib/ivy-leaf
+
+    - name: Install leaf binary
+      ansible.builtin.copy:
+        src: "leaf-{{ ivy_version }}-linux-{{ ansible_architecture }}"
+        dest: /usr/local/bin/ivy-leaf
+        owner: root
+        group: root
+        mode: "0755"
+      notify: Restart ivy-leaf
+
+    - name: Deploy mTLS certificates
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: ivy-leaf
+        group: ivy-leaf
+        mode: "0600"
+      loop:
+        - src: "certs/{{ inventory_hostname }}-client.pem"
+          dest: "{{ ivy_cert_dir }}/client.pem"
+        - src: "certs/{{ inventory_hostname }}-client-key.pem"
+          dest: "{{ ivy_cert_dir }}/client-key.pem"
+        - src: "certs/ca.pem"
+          dest: "{{ ivy_cert_dir }}/ca.pem"
+      notify: Restart ivy-leaf
+
+    - name: Install config file
+      ansible.builtin.template:
+        src: leaf.yaml.j2
+        dest: /etc/ivy-leaf/config.yaml
+        owner: ivy-leaf
+        group: ivy-leaf
+        mode: "0640"
+        validate: cat %s
+      notify: Restart ivy-leaf
+
+    - name: Install systemd unit
+      ansible.builtin.template:
+        src: ivy-leaf.service.j2
+        dest: /etc/systemd/system/ivy-leaf.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Restart ivy-leaf
+
+    - name: Set filesystem ACLs for allowed directories
+      ansible.posix.acl:
+        path: "{{ item }}"
+        entity: ivy-leaf
+        etype: user
+        permissions: rX
+        state: present
+      loop: "{{ ivy_leaf_allowed_dirs | default([]) }}"
+      when: ivy_leaf_allowed_dirs is defined
+
+    - name: Enable and start ivy-leaf service
+      ansible.builtin.systemd:
+        name: ivy-leaf
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart ivy-leaf
+      ansible.builtin.systemd:
+        name: ivy-leaf
+        state: restarted

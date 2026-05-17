@@ -1,0 +1,36 @@
+# Example Ivy Ansible Inventory
+#
+# Usage:
+#   ansible-playbook -i inventory.yml deploy-leaf.yml
+#   ansible-playbook -i inventory.yml deploy-vine.yml
+
+all:
+  children:
+    vine:
+      hosts:
+        vine-01.internal:
+          ansible_user: deploy
+          ansible_python_interpreter: /usr/bin/python3
+
+    leaves:
+      hosts:
+        parser-01.internal:
+          ansible_user: deploy
+          ivy_leaf_host_id: parser-01
+          ivy_leaf_allowed_dirs:
+            - /etc/logstash
+            - /var/log/logstash
+            - /opt/logstash/pipelines
+
+        parser-02.internal:
+          ansible_user: deploy
+          ivy_leaf_host_id: parser-02
+          ivy_leaf_allowed_dirs:
+            - /etc/logstash
+            - /var/log/logstash
+            - /opt/logstash/pipelines
+
+  vars:
+    ivy_version: "0.1.0"
+    ivy_vine_address: "vine-01.internal:50051"
+    ivy_cert_dir: "/etc/ivy-leaf/certs"
