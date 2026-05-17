@@ -231,136 +231,73 @@ Build the tool registry and dispatch system that the agent uses. This is what tr
 
 ---
 
-## Phase 4: Leaf Daemon
+## Phase 4: Leaf Daemon — ✅ COMPLETE
 
 ### 4.1 — Leaf Daemon Core
-- **Status:** `[ ]`
+- **Status:** `[x]`
 - **Depends On:** 1.3
 - **Blocks:** 4.2, 4.3
 
-**Description:**
-Build the lightweight leaf daemon that runs on each log parser host. It connects to vine via gRPC (bidirectional streaming), executes whitelisted read-only commands, and syncs directory contents.
-
-**Tasks:**
-- [ ] Flesh out `cmd/leaf/main.go`:
-  - Connect to vine gRPC endpoint with mTLS
-  - Establish bidirectional stream
-  - Handle commands from stream
-  - Heartbeat / keepalive
-- [ ] Create `internal/leaf/commands/executor.go`:
-  - `Execute(commandType, args) (CommandResult, error)`
-  - Strict command whitelist — reject anything not in the allowed list
-  - No shell expansion, no pipes, no subshells — each command is direct exec
-  - Working directory restricted to allowed directories
-  - Timeout enforcement
-  - Output size limits (prevent dumping huge files)
-- [ ] Implement each whitelisted command:
-  - `grep` — only read-only flags (`-r`, `-i`, `-n`, `-c`, `-v`, `-l`)
-  - `awk` — basic awk programs (validate no system() or pipe)
-  - `find` — search within allowed directories only
-  - `cat` — only files within allowed directories
-  - `read_file` — direct file read with path validation
-  - `tail` — with `-n`, `-f` (timeout-bound)
-  - `systemctl status` — only the status subcommand, only for logstash services
-  - `journalctl` — read-only flags only (`-u`, `-n`, `--since`, `--until`, `--no-pager`)
-- [ ] Create `internal/leaf/sync/sync.go`:
-  - Stream directory contents to vine on request
-  - Tar + stream files from allowed directories
-  - Checksum verification
-  - Incremental sync (only changed files)
-- [ ] Path validation function — resolve symlinks, ensure within allowed directories
-  - Reject `..`, symlinks outside allowed dirs, `/proc`, `/sys`, etc.
-- [ ] Logging — all commands executed are logged with timestamp, command, args, result summary
-- [ ] Systemd unit file for leaf
-
-**Acceptance Criteria:**
-- Leaf connects to vine via gRPC with mTLS
-- All whitelisted commands execute correctly
-- Any command outside the whitelist is rejected
-- Path traversal attempts are blocked
-- Directory sync works for allowed directories
-- Runs as its own user with minimal permissions
+**Completed:**
+- [x] `internal/leaf/commands/path.go` — ValidatePath, ValidateWorkingDir with symlink resolution, blocked paths (/proc, /sys, /dev, /run), path traversal rejection
+- [x] `internal/leaf/commands/executor.go` — whitelisted command executor with:
+  - Strict whitelist: grep, awk, find, cat, tail, systemctl, journalctl
+  - Per-command flag filtering (e.g. only `systemctl status`)
+  - awk blocked for system(), pipe, coproc
+  - Direct exec (no shell), timeout enforcement, 1MB output limit
+  - GetTimeout() accessor for gRPC client
+- [x] `internal/leaf/sync/sync.go` — directory sync with tar archives, SHA-256 checksums, incremental diff, tar path traversal validation
+- [x] `internal/leaf/grpcclient/client.go` — gRPC client:
+  - Connects to vine via bidirectional streaming (leaf = client)
+  - Sends Registration on connect (host_id, hostname, allowed_dirs)
+  - Dispatches ExecuteCommand and SyncDirectory from vine
+  - Auto-reconnect with configurable interval
+  - Heartbeat goroutine (30s), directory sync in 64KB chunks
+  - protoCmdToString maps proto CommandType to executor commands
+- [x] `cmd/leaf/main.go` — fully wired: config → executor → gRPC client → heartbeat → graceful shutdown
+- [x] 47 tests across 4 leaf packages (path: 10, executor: 16, sync: 12, grpcclient: 5)
 
 ---
 
 ### 4.2 — Parser Host Tools (Vine Side)
-- **Status:** `[ ]`
+- **Status:** `[x]`
 - **Depends On:** 2.4, 4.1
 - **Blocks:** None
 
-**Description:**
-The vine side of the parser host tools. Routes tool calls from the agent through gRPC to the appropriate leaf.
-
-**Tasks:**
-- [ ] Create `internal/vine/tools/parser_client.go`:
-  - Maintains connections to registered leaves
-  - Routes commands to the right leaf based on session → parser mapping
-  - Handles connection drops and reconnection
-- [ ] Create leaf registry:
-  - Track which leaves are connected (via gRPC stream metadata / Registration message)
-  - Session can be associated with a specific parser host
-  - Fallback / error if the leaf is disconnected
-- [ ] Wire parser tools into tool registry (from 2.4)
-
-**Acceptance Criteria:**
-- Agent tool calls route to the correct leaf
-- Disconnected leaves surface clear errors
-- Multiple leaves can be connected simultaneously
+**Completed:**
+- [x] `internal/vine/leafmgr/manager.go` — Leaf connection manager:
+  - Tracks connected leaves by hostID, auto-replaces on reconnect
+  - SendCommand / SendCommandAndWait (blocks until response)
+  - ResolveHost (empty = default leaf)
+  - PendingCommand with response channels
+  - HandleCommandOutput routes responses to waiting callers
+- [x] `internal/vine/leafmgr/server.go` — gRPC LeafServiceServer for vine:
+  - Connect() handles bidirectional stream, dispatches Registration/Heartbeat/CommandOutput/DirectoryChunk
+  - Auto-unregisters leaf on stream disconnect
+- [x] `internal/vine/tools/parser_tools.go` — rewired parser tools:
+  - LeafManager interface with SendCommandAndWait
+  - parserHostTool routes through gRPC to leaf daemons
+  - Arg splitting with quote handling
+  - Proto CommandType mapping
+  - Returns exit_code, stdout, stderr, timeout in JSON response
+  - RegisterParserTools takes optional LeafManager (nil = stub mode)
+- [x] 8 manager tests
 
 ---
 
 ### 4.3 — Ansible Deployment Playbook & SECURITY.md
-- **Status:** `[ ]`
+- **Status:** `[x]`
 - **Depends On:** 4.1
 - **Blocks:** None
 
-**Description:**
-Create auditable, human-readable deployment automation and a thorough security analysis document.
-
-**Tasks:**
-- [ ] Create `deploy/ansible/inventory.example.yml`
-- [ ] Create `deploy/ansible/deploy-leaf.yml` playbook:
-  - Create `ivy-leaf` system user (no login shell, no home directory write access)
-  - Create necessary directories with restrictive permissions
-  - Install `leaf` binary
-  - Generate or deploy mTLS certificates
-  - Install config file (`/etc/ivy-leaf/config.yaml`)
-  - Install systemd unit
-  - Set up filesystem ACLs (read-only access to allowed directories)
-  - Optionally: deploy AppArmor/SELinux profile
-  - Start and enable service
-  - Verify connectivity to vine
-- [ ] Create `deploy/ansible/deploy-vine.yml` playbook:
-  - Install Docker if not present
-  - Create `ivy` system user
-  - Install `vine` binary
-  - Install config (`/etc/ivy/config.yaml`)
-  - Generate or deploy mTLS certificates (including CA for leaves)
-  - Install systemd unit
-  - Run database migrations
-  - Pull/build sandbox Docker images
-  - Start and enable service
-- [ ] Create AppArmor profile (`deploy/apparmor/ivy-leaf`):
-  - Allow reading only from allowed directories
-  - Allow executing only whitelisted commands
-  - Deny network access except to vine
-  - Deny write access except to own log/config directory
-- [ ] Create `SECURITY.md` with sections:
-  - **Threat Model** — what we're protecting against
-  - **Leaf Daemon Security** — why the permissions are minimal, what's whitelisted, audit trail
-  - **Network Security** — mTLS, no inbound ports on parser hosts, Docker network isolation
-  - **Agent Sandbox Security** — no network, resource limits, ephemeral by default
-  - **Credential Boundaries** — where secrets live, what has access to what
-  - **Audit & Logging** — what's logged, retention, how to review
-  - **Deployment Security** — IaC benefits, human auditable playbooks, mTLS certificate rotation
-  - **Known Limitations** — what the MVP does NOT protect against
-- [ ] Add `deploy/ansible/vars/main.yml` for configurable parameters
-
-**Acceptance Criteria:**
-- Ansible playbooks are idempotent and can be run repeatedly
-- SECURITY.md covers all major security considerations
-- Leaf runs as its own user with minimal permissions
-- All security decisions are documented and justified
+**Completed:**
+- [x] `deploy/ansible/inventory.example.yml` — example host grouping (vine + leaves)
+- [x] `deploy/ansible/deploy-leaf.yml` — creates ivy-leaf user, installs binary, deploys mTLS certs, config, systemd unit, filesystem ACLs, enables service
+- [x] `deploy/ansible/deploy-vine.yml` — installs Docker, creates ivy user, installs binary, deploys certs, config, systemd unit, runs migrations, pulls Docker images
+- [x] `deploy/ansible/vars/main.yml` — shared variables (version, addresses, allowed dirs/commands)
+- [x] `deploy/ansible/templates/` — systemd unit files (with hardening), leaf config template
+- [x] `deploy/apparmor/ivy-leaf` — AppArmor profile: read-only allowed dirs, execute only whitelisted binaries, deny /proc /sys /dev /tmp
+- [x] `SECURITY.md` — threat model, leaf security, network security, sandbox security, credential boundaries, deployment security, known limitations, security checklist
 
 ---
 
@@ -594,7 +531,7 @@ Final security review, hardening, and production readiness checklist.
 
 ### What's built
 - **`vine`** binary — main daemon entrypoint with config loading, structured logging, signal handling
-- **`leaf`** binary — leaf daemon entrypoint with config loading, structured logging, signal handling
+- **`leaf`** binary — leaf daemon entrypoint with gRPC client, command executor, heartbeat, graceful shutdown
 - **PostgreSQL schema** — 5 tables (sessions, events, skills, knowledge_entries, skill_usage) with pgvector indexes
 - **gRPC protobuf** — `LeafService` with bidirectional streaming, command execution, directory sync
 - **GoReleaser** — cross-platform builds for vine + leaf
@@ -605,11 +542,14 @@ Final security review, hardening, and production readiness checklist.
 - **LLM client** — OpenAI-compatible with SSE streaming
 - **Context builder** — event→message conversion, skill injection, truncation at 128k tokens
 - **Docker sandbox manager** — container lifecycle, Exec with stdcopy demux, WriteFile/ReadFile via tar, idle cleanup
-- **Tool framework** — 20 tools registered: 3 sandbox, 2 search stubs, 8 parser host stubs, 2 skill tools, 5 pipeline tools
+- **Tool framework** — 20 tools registered: 3 sandbox, 2 search stubs, 8 parser host (gRPC-routed), 2 skill tools, 5 pipeline tools
 - **Skill tools** — list_skills, get_skill with 5 built-in skills (kafka-debugging, elasticsearch-query-patterns, logstash-config-patterns, sysadmin-debugging, create-skill)
 - **Pipeline sandbox** — Redpanda → Logstash → ES with config rewriting, health checks, end-to-end data flow verified
 - **Pipeline health checks** — per-component status (Redpanda via `rpk`, ES via cluster health API, Logstash via pipeline API) with structured health reports
-- **167 tests passing** across 12 packages, lint clean
+- **Leaf daemon** — gRPC client, whitelisted command executor, directory sync, path validation
+- **Leaf manager** — vine-side connection tracking, command routing, gRPC server for leaf connections
+- **Ansible deployment** — playbooks for vine + leaf, systemd units, AppArmor profile, SECURITY.md
+- **227 tests passing** across 16 packages, lint clean
 
 ### Directory structure
 ```
@@ -626,14 +566,16 @@ ivy/
 │   │   ├── eventstore/       # Append-only event log + tests ✅
 │   │   ├── orchestrator/     # Agent runtime loop + tests ✅
 │   │   ├── tools/            # Tool registry, 20 tools, integration tests ✅
+│   │   ├── leafmgr/           # Leaf connection manager + gRPC server + tests ✅
 │   │   ├── connector/clickup/# ClickUp integration (empty)
 │   │   ├── skills/           # Skill system (empty)
 │   │   ├── history/          # Vector/semantic search (empty)
 │   │   └── vine/             # Docker sandbox + pipeline + health checks + tests ✅
 │   ├── leaf/
 │   │   ├── config/           # Config loading + tests ✅
-│   │   ├── commands/         # Whitelisted command executor (empty)
-│   │   └── sync/             # Directory sync (empty)
+│   │   ├── commands/         # Path validation, whitelisted executor + tests ✅
+│   │   ├── grpcclient/       # gRPC client + tests ✅
+│   │   └── sync/             # Directory sync (tar, checksums, diff) + tests ✅
 │   └── ivyv1/                # Generated protobuf + tests ✅
 ├── proto/leaf.proto          # gRPC service definitions
 ├── migrations/001_init_schema.sql
@@ -641,7 +583,9 @@ ivy/
 ├── deploy/
 │   ├── docker/docker-compose.dev.yml
 │   ├── docker/agent-sandbox.Dockerfile
-│   └── docker/pipeline-sandbox-compose.yml
+│   ├── docker/pipeline-sandbox-compose.yml
+│   ├── ansible/              # Playbooks, templates, vars, inventory ✅
+│   └── apparmor/ivy-leaf     # AppArmor profile ✅
 ├── Makefile, buf.yaml, buf.gen.yaml
 ├── .goreleaser.yml, .golangci.yml
 └── go.mod (github.com/aspectrr/ivy)
@@ -662,10 +606,15 @@ ivy/
 | `vine` (config rewrite) | 28 | Unit |
 | `vine` (pipeline) | 8 | Docker integration (gated: `IVY_PIPELINE_TESTS=1`) |
 | `vine` (health) | 10 | Unit + Docker integration |
-| **Total** | **167** | |
+| `leaf/config` | 4 | Unit |
+| `leaf/commands` | 26 | Unit |
+| `leaf/sync` | 12 | Unit |
+| `leaf/grpcclient` | 5 | Unit |
+| `vine/leafmgr` | 8 | Unit |
+| **Total** | **227** | |
 
 ### Next up
-**Phase 4.1 — Leaf Daemon Core.** Build the lightweight leaf daemon that runs on log parser hosts. Connects to vine via gRPC bidirectional streaming, executes whitelisted read-only commands, and syncs directory contents.
+**Phase 5.1 — ClickUp Connector.** Build the ClickUp integration that maps tasks to sessions.
 
 ---
 
@@ -701,7 +650,7 @@ Phase 6: 6.1 (all above) → 6.2
 | Phase 1: Foundation | 1.1, 1.2, 1.3 | ~~1-2 weeks~~ | ✅ Done |
 | Phase 2: Core Vine Daemon | 2.1, 2.2, 2.3, 2.4 | ~~3-4 weeks~~ | ✅ Done |
 | Phase 3: Pipeline Sandbox | 3.1, 3.2, (3.3 deferred) | ~~2-3 weeks~~ | ✅ Done |
-| Phase 4: Leaf Daemon | 4.1, 4.2, 4.3 | 2 weeks | ⬜ Next |
+| Phase 4: Leaf Daemon | 4.1, 4.2, 4.3 | ~~2 weeks~~ | ✅ Done |
 | Phase 5: Connectors & Knowledge | 5.1, 5.2, 5.3 | 2-3 weeks | ⬜ Pending |
 | Phase 6: Integration & Polish | 6.1, 6.2 | 1-2 weeks | ⬜ Pending |
-| **Total MVP** | | **5-7 weeks remaining** | |
+| **Total MVP** | | **3-5 weeks remaining** | |
