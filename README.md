@@ -83,21 +83,22 @@ export IVY_LLM_MODEL=mistralai/mistral-medium-3-5
 
 ### 4. Connect ClickUp
 
-Install the ivy CLI and run the guided setup:
+The Ivy OAuth app is pre-configured in the CLI. Each organization just runs:
 
 ```bash
 go install github.com/aspectrr/ivy/cmd/ivy@latest
 ivy auth clickup
 ```
 
-This walks you through:
+This opens your browser for OAuth — you authorize your ClickUp workspace (no extra seat needed, any member can do this). Then the CLI walks you through:
 
-1. **OAuth** — opens your browser, you authorize the workspace (no extra ClickUp seat needed, any member can do this)
-2. **Pick team** — auto-selected if you only have one workspace
-3. **Pick space** — choose which space the agent should watch
-4. **Pick list** — choose a specific list to scope the agent to, or select "all" for the entire space
+1. **Pick team** — auto-selected if you only have one workspace
+2. **Pick space** — choose where the agent should respond to `@mentions`
+3. **Pick list** — scope to a specific list, or select "all" for the entire space
 
-After selection, the CLI prints a complete config snippet with all IDs filled in — just paste it into your vine config. No need to hunt for team IDs or user IDs manually.
+After selection, the CLI prints a complete config snippet with all IDs filled in — just paste it into your vine config.
+
+Each organization gets their own access token scoped to their workspace. No shared credentials, no inbound access to the vine host needed.
 
 To validate an existing token:
 
@@ -126,7 +127,7 @@ make build
 
 Ivy connects to ClickUp so people can assign tasks to the agent or `@mention` it in comments. The agent picks up the task with full context (description, comments, attachments) and starts working.
 
-By default, the agent is scoped to a specific list within a space. Only tasks in that list trigger the agent — it won't interfere with the rest of your workspace.
+The agent is scoped to a specific space and list (configured during setup). Only @mentions and assignments within that scope trigger the agent — it won't interfere with the rest of your workspace.
 
 Vine polls ClickUp every 30 seconds (configurable) and reacts to three types of events:
 

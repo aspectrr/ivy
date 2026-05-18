@@ -40,12 +40,17 @@ type OAuthApp struct {
 	ClientSecret string
 }
 
-// DefaultOAuthApp returns the Ivy OAuth app credentials, with environment
-// variable overrides for development or custom deployments.
+// DefaultOAuthApp returns the Ivy OAuth app credentials.
+//
+// The defaults are the official Ivy ClickUp OAuth app. Override via
+// environment variables for development or custom deployments.
+//
+// To set the defaults, replace the empty strings below with your
+// client_id and client_secret from https://app.clickup.com/settings/apps
 func DefaultOAuthApp() OAuthApp {
 	return OAuthApp{
-		ClientID:     envOr("IVY_CLICKUP_CLIENT_ID", ""),
-		ClientSecret: envOr("IVY_CLICKUP_CLIENT_SECRET", ""),
+		ClientID:     envOr("IVY_CLICKUP_CLIENT_ID", ""),  // TODO: set default client_id
+		ClientSecret: envOr("IVY_CLICKUP_CLIENT_SECRET", ""), // TODO: set default client_secret
 	}
 }
 

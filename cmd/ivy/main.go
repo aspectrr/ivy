@@ -74,16 +74,16 @@ Commands:
 Authentication:
   The OAuth flow runs entirely on your laptop. No inbound access to
   the vine host is required. After connecting, you'll pick which team,
-  space, and list to scope the agent to — so it only watches a specific
-  board rather than your entire workspace.
+  space, and list the agent is allowed to respond to @mentions in — so you
+can scope it to a single board rather than your entire workspace.
 
   For enterprise setups, use OAuth so no extra ClickUp seat is needed.
   Any workspace member can authorize — admin is not required, but someone
   with broad workspace access is recommended so the agent can see all tasks.
 
 Environment Variables:
-  IVY_CLICKUP_CLIENT_ID       OAuth client ID (defaults to Ivy's public app)
-  IVY_CLICKUP_CLIENT_SECRET   OAuth client secret (defaults to Ivy's public app)
+  IVY_CLICKUP_CLIENT_ID       Override the built-in OAuth client ID
+  IVY_CLICKUP_CLIENT_SECRET   Override the built-in OAuth client secret
 
 Examples:
   ivy auth clickup                        # OAuth — opens browser, guided setup
@@ -129,13 +129,13 @@ func authClickUp(args []string) {
 
 // pickResult holds the user's selections from the guided setup.
 type pickResult struct {
-	Token   string
-	TeamID  string
-	TeamName string
-	SpaceID string
+	Token     string
+	TeamID    string
+	TeamName  string
+	SpaceID   string
 	SpaceName string
-	ListID  string
-	ListName string
+	ListID    string
+	ListName  string
 }
 
 func oauthFlow(port int) {
@@ -143,25 +143,20 @@ func oauthFlow(port int) {
 
 	if app.ClientID == "" {
 		fmt.Fprint(os.Stderr, `
-⚠  OAuth credentials not configured.
+⚠  This is a development build — OAuth credentials are not configured.
 
-Before using the OAuth flow, you need to create a ClickUp OAuth app:
+To set up the OAuth app for development:
 
   1. Go to https://app.clickup.com/settings/apps
   2. Click "Create new app"
-  3. Name it "Ivy" (or whatever you prefer)
+  3. Name it "Ivy Dev" (or whatever you prefer)
   4. Set the redirect URL to: http://localhost:8765/callback
   5. Copy the Client ID and Client Secret
+  6. Set them before running:
 
-Then run:
-
-  export IVY_CLICKUP_CLIENT_ID="your_client_id"
-  export IVY_CLICKUP_CLIENT_SECRET="your_client_secret"
-  ivy auth clickup
-
-For a quicker setup, use a personal token instead:
-
-  ivy auth clickup --personal
+       export IVY_CLICKUP_CLIENT_ID="your_client_id"
+       export IVY_CLICKUP_CLIENT_SECRET="your_client_secret"
+       ivy auth clickup
 
 `)
 		os.Exit(exitAuth)
@@ -198,7 +193,7 @@ For a quicker setup, use a personal token instead:
 		fmt.Fprintf(os.Stderr, "\nWorkspace: %s\n", pick.TeamName)
 	} else {
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "Which workspace should the agent watch?")
+		fmt.Fprintln(os.Stderr, "Which workspace should the agent be available in?")
 		for i, t := range teams {
 			fmt.Fprintf(os.Stderr, "  %d) %s\n", i+1, t.Name)
 		}
@@ -221,7 +216,7 @@ For a quicker setup, use a personal token instead:
 		fmt.Fprintf(os.Stderr, "Space:     %s\n", pick.SpaceName)
 	} else {
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "Which space should the agent watch?")
+		fmt.Fprintln(os.Stderr, "Where should the agent respond to @mentions?")
 		for i, s := range spaces {
 			fmt.Fprintf(os.Stderr, "  %d) %s\n", i+1, s.Name)
 		}
@@ -244,7 +239,7 @@ For a quicker setup, use a personal token instead:
 		fmt.Fprintf(os.Stderr, "List:      %s\n", pick.ListName)
 	} else {
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "Which list should the agent watch? (or 'all' for the entire space)")
+		fmt.Fprintln(os.Stderr, "Which list should the agent respond in? (or 'all' for the entire space)")
 		for i, l := range lists {
 			fmt.Fprintf(os.Stderr, "  %d) %s\n", i+1, l.Name)
 		}
@@ -252,11 +247,11 @@ For a quicker setup, use a personal token instead:
 
 		choice := promptString("Select list")
 		if choice == "a" || choice == "all" {
-			// No list filter — agent watches the whole space.
+			// No list filter — agent responds in any list in the space.
 		} else {
 			idx, err := strconv.Atoi(choice)
 			if err != nil || idx < 1 || idx > len(lists) {
-				fmt.Fprintf(os.Stderr, "Invalid choice. Defaulting to all lists in space.\n")
+				fmt.Fprintf(os.Stderr, "Invalid choice. Defaulting to all lists.\n")
 			} else {
 				pick.ListID = lists[idx-1].ID
 				pick.ListName = lists[idx-1].Name
@@ -306,7 +301,7 @@ Or set environment variables:
 	}
 
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintf(os.Stderr, "Agent will watch: %s / %s", pick.TeamName, pick.SpaceName)
+	fmt.Fprintf(os.Stderr, "Agent will respond to @mentions in: %s / %s", pick.TeamName, pick.SpaceName)
 	if pick.ListName != "" {
 		fmt.Fprintf(os.Stderr, " / %s", pick.ListName)
 	}
