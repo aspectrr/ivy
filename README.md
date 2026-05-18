@@ -83,16 +83,21 @@ export IVY_LLM_MODEL=mistralai/mistral-medium-3-5
 
 ### 4. Connect ClickUp
 
-Install the ivy CLI and authenticate with ClickUp:
+Install the ivy CLI and run the guided setup:
 
 ```bash
 go install github.com/aspectrr/ivy/cmd/ivy@latest
 ivy auth clickup
 ```
 
-This opens your browser for OAuth — authorize the workspace(s) you want the agent to access. No extra ClickUp seat needed. Any workspace member can do this (admin is not required, but someone with broad access is recommended).
+This walks you through:
 
-The CLI prints an access token and instructions for adding it to your vine config.
+1. **OAuth** — opens your browser, you authorize the workspace (no extra ClickUp seat needed, any member can do this)
+2. **Pick team** — auto-selected if you only have one workspace
+3. **Pick space** — choose which space the agent should watch
+4. **Pick list** — choose a specific list to scope the agent to, or select "all" for the entire space
+
+After selection, the CLI prints a complete config snippet with all IDs filled in — just paste it into your vine config. No need to hunt for team IDs or user IDs manually.
 
 To validate an existing token:
 
@@ -106,47 +111,7 @@ For personal tokens (single user, less ideal for enterprise):
 ivy auth clickup --personal
 ```
 
-### 5. Get the Team ID
-
-1. Open ClickUp in your browser
-2. Navigate to any view in your workspace
-3. The URL looks like: `https://app.clickup.com/90141261182/v/lis/...`
-4. The number after `/app/` is your **Team ID** (e.g., `90141261182`)
-
-Alternatively, find it in **Settings → Team → Team ID**.
-
-### 6. Configure vine
-
-Set the following environment variables:
-
-```bash
-# Required — from ivy auth clickup
-export IVY_CLICKUP_API_TOKEN=your-token
-export IVY_CLICKUP_TEAM_ID=90141261182
-
-# Required for @mention detection — the agent's ClickUp username
-export IVY_CLICKUP_AGENT_USERNAME=ivy-agent
-```
-
-Or set them in your config file (`configs/vine.yaml`):
-
-```yaml
-connectors:
-  clickup:
-    enabled: true
-    auth_mode: oauth          # "oauth" or "personal" — auto-detected from token prefix
-    api_token: ""             # Set via IVY_CLICKUP_API_TOKEN env var
-    team_id: ""               # Set via IVY_CLICKUP_TEAM_ID env var
-    agent_username: ""        # e.g. "ivy-agent" — for @mention detection
-    assignee: ""              # e.g. "12345" — the agent's user ID for assignment detection
-    poll_interval: "30s"
-    # Optional: restrict to specific list or space
-    list_id: ""
-    space_id: ""
-    tag: ""                   # Only process tasks with this tag
-```
-
-### 7. Build & Run
+### 5. Build & Run
 
 ```bash
 make build
@@ -160,6 +125,8 @@ make build
 ### How It Works
 
 Ivy connects to ClickUp so people can assign tasks to the agent or `@mention` it in comments. The agent picks up the task with full context (description, comments, attachments) and starts working.
+
+By default, the agent is scoped to a specific list within a space. Only tasks in that list trigger the agent — it won't interfere with the rest of your workspace.
 
 Vine polls ClickUp every 30 seconds (configurable) and reacts to three types of events:
 

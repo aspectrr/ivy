@@ -278,3 +278,41 @@ func TestDefaultOAuthApp_NoEnv(t *testing.T) {
 		t.Errorf("ClientID should be empty without env, got %q", app.ClientID)
 	}
 }
+
+func TestGetSpaces(t *testing.T) {
+	spacesJSON := `{"spaces":[{"id":"sp1","name":"DevOps"},{"id":"sp2","name":"Data Engineering"}]}`
+	var result struct {
+		Spaces []Space `json:"spaces"`
+	}
+	if err := json.Unmarshal([]byte(spacesJSON), &result); err != nil {
+		t.Fatalf("parse spaces JSON: %v", err)
+	}
+	if len(result.Spaces) != 2 {
+		t.Fatalf("expected 2 spaces, got %d", len(result.Spaces))
+	}
+	if result.Spaces[0].Name != "DevOps" {
+		t.Errorf("space[0].Name = %q, want DevOps", result.Spaces[0].Name)
+	}
+	if result.Spaces[1].ID != "sp2" {
+		t.Errorf("space[1].ID = %q, want sp2", result.Spaces[1].ID)
+	}
+}
+
+func TestGetLists(t *testing.T) {
+	listsJSON := `{"lists":[{"id":"l1","name":"Pipeline Issues"},{"id":"l2","name":"Onboarding"}]}`
+	var result struct {
+		Lists []List `json:"lists"`
+	}
+	if err := json.Unmarshal([]byte(listsJSON), &result); err != nil {
+		t.Fatalf("parse lists JSON: %v", err)
+	}
+	if len(result.Lists) != 2 {
+		t.Fatalf("expected 2 lists, got %d", len(result.Lists))
+	}
+	if result.Lists[0].Name != "Pipeline Issues" {
+		t.Errorf("list[0].Name = %q, want Pipeline Issues", result.Lists[0].Name)
+	}
+	if result.Lists[1].ID != "l2" {
+		t.Errorf("list[1].ID = %q, want l2", result.Lists[1].ID)
+	}
+}

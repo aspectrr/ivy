@@ -297,6 +297,86 @@ type AuthorizedTeam struct {
 	Name string `json:"name"`
 }
 
+// Space represents a ClickUp space within a team.
+type Space struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// List represents a ClickUp list within a space.
+type List struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// GetSpaces fetches all spaces in a team.
+func GetSpaces(ctx context.Context, token, teamID string) ([]Space, error) {
+	url := fmt.Sprintf("https://api.clickup.com/api/v2/team/%s/space", teamID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating spaces request: %w", err)
+	}
+	req.Header.Set("Authorization", token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetching spaces: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("reading spaces response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("spaces request failed (HTTP %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Spaces []Space `json:"spaces"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("decoding spaces response: %w", err)
+	}
+
+	return result.Spaces, nil
+}
+
+// GetLists fetches all lists in a space.
+func GetLists(ctx context.Context, token, spaceID string) ([]List, error) {
+	url := fmt.Sprintf("https://api.clickup.com/api/v2/space/%s/list", spaceID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating lists request: %w", err)
+	}
+	req.Header.Set("Authorization", token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetching lists: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("reading lists response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("lists request failed (HTTP %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Lists []List `json:"lists"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("decoding lists response: %w", err)
+	}
+
+	return result.Lists, nil
+}
+
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v

@@ -8,16 +8,18 @@
 //
 // Usage:
 //
-//	ivy auth clickup              # OAuth flow (opens browser)
+//	ivy auth clickup              # OAuth flow (opens browser, guides team/space/list selection)
 //	ivy auth clickup --personal   # Show instructions for a personal API token
 //	ivy auth clickup --validate   # Validate a token from env or stdin
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,6 +31,12 @@ const (
 	exitErr  = 1
 	exitAuth = 2
 )
+
+var stdin *bufio.Reader
+
+func init() {
+	stdin = bufio.NewReader(os.Stdin)
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -65,8 +73,9 @@ Commands:
 
 Authentication:
   The OAuth flow runs entirely on your laptop. No inbound access to
-  the vine host is required. After connecting, you'll receive a token
-  to add to your vine configuration.
+  the vine host is required. After connecting, you'll pick which team,
+  space, and list to scope the agent to — so it only watches a specific
+  board rather than your entire workspace.
 
   For enterprise setups, use OAuth so no extra ClickUp seat is needed.
   Any workspace member can authorize — admin is not required, but someone
@@ -77,7 +86,7 @@ Environment Variables:
   IVY_CLICKUP_CLIENT_SECRET   OAuth client secret (defaults to Ivy's public app)
 
 Examples:
-  ivy auth clickup                        # OAuth — opens browser
+  ivy auth clickup                        # OAuth — opens browser, guided setup
   ivy auth clickup --personal             # Shows personal token instructions
   IVY_CLICKUP_API_TOKEN=pk_xxx ivy auth clickup --validate  # Validate a token
 `)
@@ -116,6 +125,17 @@ func authClickUp(args []string) {
 	}
 
 	oauthFlow(*port)
+}
+
+// pickResult holds the user's selections from the guided setup.
+type pickResult struct {
+	Token   string
+	TeamID  string
+	TeamName string
+	SpaceID string
+	SpaceName string
+	ListID  string
+	ListName string
 }
 
 func oauthFlow(port int) {
@@ -158,26 +178,150 @@ For a quicker setup, use a personal token instead:
 		os.Exit(exitErr)
 	}
 
-	// Try to fetch authorized teams to give the user more context.
-	teams, teamsErr := auth.GetAuthorizedTeams(ctx, result.AccessToken)
-
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "✓ ClickUp workspace connected!")
-	if teamsErr == nil && len(teams) > 0 {
+	fmt.Fprintln(os.Stderr, "✓ ClickUp connected!")
+
+	// Guided setup: team → space → list selection.
+	pick := pickResult{Token: result.AccessToken}
+
+	// ── Pick team ─────────────────────────────────────────────
+	teams, err := auth.GetAuthorizedTeams(ctx, result.AccessToken)
+	if err != nil || len(teams) == 0 {
+		fmt.Fprintf(os.Stderr, "\n⚠  Could not fetch teams: %s\n", err)
+		printConfigNoPick(pick)
+		return
+	}
+
+	if len(teams) == 1 {
+		pick.TeamID = teams[0].ID
+		pick.TeamName = teams[0].Name
+		fmt.Fprintf(os.Stderr, "\nWorkspace: %s\n", pick.TeamName)
+	} else {
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprint(os.Stderr, "Authorized workspaces:\n")
-		for _, t := range teams {
-			fmt.Fprintf(os.Stderr, "  • %s (ID: %s)\n", t.Name, t.ID)
+		fmt.Fprintln(os.Stderr, "Which workspace should the agent watch?")
+		for i, t := range teams {
+			fmt.Fprintf(os.Stderr, "  %d) %s\n", i+1, t.Name)
+		}
+		idx := promptSelect("Select workspace", len(teams))
+		pick.TeamID = teams[idx].ID
+		pick.TeamName = teams[idx].Name
+	}
+
+	// ── Pick space ─────────────────────────────────────────────
+	spaces, err := auth.GetSpaces(ctx, result.AccessToken, pick.TeamID)
+	if err != nil || len(spaces) == 0 {
+		fmt.Fprintf(os.Stderr, "\n⚠  Could not fetch spaces: %s\n", err)
+		printConfigNoPick(pick)
+		return
+	}
+
+	if len(spaces) == 1 {
+		pick.SpaceID = spaces[0].ID
+		pick.SpaceName = spaces[0].Name
+		fmt.Fprintf(os.Stderr, "Space:     %s\n", pick.SpaceName)
+	} else {
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Which space should the agent watch?")
+		for i, s := range spaces {
+			fmt.Fprintf(os.Stderr, "  %d) %s\n", i+1, s.Name)
+		}
+		idx := promptSelect("Select space", len(spaces))
+		pick.SpaceID = spaces[idx].ID
+		pick.SpaceName = spaces[idx].Name
+	}
+
+	// ── Pick list (optional) ───────────────────────────────────
+	lists, err := auth.GetLists(ctx, result.AccessToken, pick.SpaceID)
+	if err != nil || len(lists) == 0 {
+		fmt.Fprintf(os.Stderr, "\n⚠  Could not fetch lists: %s\n", err)
+		printConfig(pick)
+		return
+	}
+
+	if len(lists) == 1 {
+		pick.ListID = lists[0].ID
+		pick.ListName = lists[0].Name
+		fmt.Fprintf(os.Stderr, "List:      %s\n", pick.ListName)
+	} else {
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Which list should the agent watch? (or 'all' for the entire space)")
+		for i, l := range lists {
+			fmt.Fprintf(os.Stderr, "  %d) %s\n", i+1, l.Name)
+		}
+		fmt.Fprintf(os.Stderr, "  a) All lists in %s\n", pick.SpaceName)
+
+		choice := promptString("Select list")
+		if choice == "a" || choice == "all" {
+			// No list filter — agent watches the whole space.
+		} else {
+			idx, err := strconv.Atoi(choice)
+			if err != nil || idx < 1 || idx > len(lists) {
+				fmt.Fprintf(os.Stderr, "Invalid choice. Defaulting to all lists in space.\n")
+			} else {
+				pick.ListID = lists[idx-1].ID
+				pick.ListName = lists[idx-1].Name
+				fmt.Fprintf(os.Stderr, "List:      %s\n", pick.ListName)
+			}
 		}
 	}
 
-	// Print the token and config instructions.
+	printConfig(pick)
+}
+
+// printConfig prints the complete vine config snippet with all selected IDs.
+func printConfig(pick pickResult) {
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "── Configuration ─────────────────────────────")
+
+	listLine := ""
+	if pick.ListID != "" {
+		listLine = fmt.Sprintf("\n      list_id: %s", pick.ListID)
+	}
+
+	fmt.Fprintf(os.Stderr, `
+Add to your vine configuration:
+
+  connectors:
+    clickup:
+      enabled: true
+      auth_mode: oauth
+      api_token: %s
+      team_id: %s
+      space_id: %s%s
+
+Or set environment variables:
+
+  export IVY_CLICKUP_API_TOKEN="%s"
+  export IVY_CLICKUP_TEAM_ID="%s"
+  export IVY_CLICKUP_AUTH_MODE="oauth"
+  export IVY_CLICKUP_SPACE_ID="%s"
+`,
+		pick.Token, pick.TeamID, pick.SpaceID, listLine,
+		pick.Token, pick.TeamID, pick.SpaceID,
+	)
+
+	if pick.ListID != "" {
+		fmt.Fprintf(os.Stderr, `  export IVY_CLICKUP_LIST_ID="%s"
+`, pick.ListID)
+	}
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintf(os.Stderr, "Agent will watch: %s / %s", pick.TeamName, pick.SpaceName)
+	if pick.ListName != "" {
+		fmt.Fprintf(os.Stderr, " / %s", pick.ListName)
+	}
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr)
+}
+
+// printConfigNoPick prints config when team/space/list discovery failed.
+func printConfigNoPick(pick pickResult) {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "── Token ──────────────────────────────────────")
-	fmt.Fprintf(os.Stderr, "%s\n", result.AccessToken)
+	fmt.Fprintf(os.Stderr, "%s\n", pick.Token)
 	fmt.Fprintln(os.Stderr, "───────────────────────────────────────────────")
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprint(os.Stderr, `Add to your vine configuration:
+	fmt.Fprint(os.Stderr, `
+Add to your vine configuration:
 
   connectors:
     clickup:
@@ -274,6 +418,28 @@ func validateClickUpToken() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintf(os.Stderr, "Token type: %s\n", tokenType(token))
+}
+
+// promptSelect prompts the user to pick an item by number (1-indexed).
+// Returns the 0-indexed selection.
+func promptSelect(label string, max int) int {
+	for {
+		fmt.Fprintf(os.Stderr, "%s [1-%d]: ", label, max)
+		input, _ := stdin.ReadString('\n')
+		input = strings.TrimSpace(input)
+		idx, err := strconv.Atoi(input)
+		if err == nil && idx >= 1 && idx <= max {
+			return idx - 1
+		}
+		fmt.Fprintf(os.Stderr, "Invalid choice. Enter a number between 1 and %d.\n", max)
+	}
+}
+
+// promptString prompts the user for a freeform string.
+func promptString(label string) string {
+	fmt.Fprintf(os.Stderr, "%s: ", label)
+	input, _ := stdin.ReadString('\n')
+	return strings.TrimSpace(input)
 }
 
 // tokenType guesses the auth mode from the token prefix.
