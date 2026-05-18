@@ -54,7 +54,7 @@ services:
     container_name: ivy-vine
     ports:
       - "50051:50051" # gRPC (leaf connections)
-      - "8081:8080" # HTTP (health, webhooks)
+      - "8080:8080" # HTTP (health, webhooks)
     depends_on:
       postgres:
         condition: service_healthy
@@ -62,8 +62,12 @@ services:
       IVY_LLM_API_KEY: ${IVY_LLM_API_KEY:-}
       IVY_LLM_ENDPOINT: ${IVY_LLM_ENDPOINT:-}
       IVY_LLM_MODEL: ${IVY_LLM_MODEL:-}
+      IVY_CLICKUP_ENABLED: ${IVY_CLICKUP_ENABLED:-}
       IVY_CLICKUP_API_TOKEN: ${IVY_CLICKUP_API_TOKEN:-}
+      IVY_CLICKUP_AUTH_MODE: ${IVY_CLICKUP_AUTH_MODE:-}
       IVY_CLICKUP_TEAM_ID: ${IVY_CLICKUP_TEAM_ID:-}
+      IVY_CLICKUP_SPACE_ID: ${IVY_CLICKUP_SPACE_ID:-}
+      IVY_CLICKUP_LIST_ID: ${IVY_CLICKUP_LIST_ID:-}
     volumes:
       # Mount Docker socket for sibling container management.
       # Vine creates agent sandboxes and pipeline sandboxes on the host daemon.

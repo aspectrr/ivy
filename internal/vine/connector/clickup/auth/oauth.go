@@ -117,8 +117,8 @@ func OAuthFlow(ctx context.Context, app OAuthApp, port int) (*TokenResult, error
 			return
 		}
 
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = fmt.Fprint(w, callbackSuccessPage)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = fmt.Fprintf(w, callbackSuccessPage, token.AccessToken)
 		resultCh <- token
 	})
 
@@ -392,27 +392,328 @@ func envOr(key, fallback string) string {
 // Suppress unused import warning for log — used in tests.
 var _ = log.Printf
 
-// HTML pages shown in the browser after the OAuth callback.
+// callbackSuccessPage is an HTML template displayed after successful OAuth.
+// %s is replaced with the access token.
 const callbackSuccessPage = `<!DOCTYPE html>
-<html>
-<head><title>Ivy — Connected</title></head>
-<body style="font-family:-apple-system,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#f5f5f5">
-<div style="text-align:center">
-<h1 style="color:#4a9f4a">✓ Connected!</h1>
-<p>Your ClickUp workspace is now linked to Ivy.</p>
-<p>You can close this tab and return to your terminal.</p>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ivy \u2014 Connected</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #0a0f0d;
+    color: #e0e8e4;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* \u2500\u2500 Diagonal pulsing wave blocks \u2500\u2500 */
+  .waves {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    overflow: hidden;
+  }
+  .wave-row {
+    position: absolute;
+    display: flex;
+    gap: 6px;
+    animation: drift 8s linear infinite;
+    opacity: 0;
+  }
+  .wave-row:nth-child(1)  { top: 10%%; animation-delay: 0s;    --speed: 8s; }
+  .wave-row:nth-child(2)  { top: 20%%; animation-delay: -1s;   --speed: 7s; }
+  .wave-row:nth-child(3)  { top: 30%%; animation-delay: -2s;   --speed: 9s; }
+  .wave-row:nth-child(4)  { top: 40%%; animation-delay: -0.5s; --speed: 6s; }
+  .wave-row:nth-child(5)  { top: 50%%; animation-delay: -3s;   --speed: 8s; }
+  .wave-row:nth-child(6)  { top: 60%%; animation-delay: -1.5s; --speed: 7s; }
+  .wave-row:nth-child(7)  { top: 70%%; animation-delay: -2.5s; --speed: 9s; }
+  .wave-row:nth-child(8)  { top: 80%%; animation-delay: -4s;   --speed: 6s; }
+  .wave-row:nth-child(9)  { top: 90%%; animation-delay: -3.5s; --speed: 8s; }
+  .wave-row:nth-child(10) { top: 100%%; animation-delay: -1.2s; --speed: 7s; }
+  @keyframes drift {
+    0%%   { transform: translate(110vw, 20vh); opacity: 0; }
+    10%%  { opacity: 1; }
+    90%%  { opacity: 1; }
+    100%% { transform: translate(-40vw, -20vh); opacity: 0; }
+  }
+  .wave-row { animation-duration: var(--speed); }
+  .block {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    background: #2d6a4f;
+    animation: pulse 2s ease-in-out infinite;
+  }
+  .wave-row:nth-child(odd) .block  { animation-delay: calc(var(--i, 0) * 0.15s); }
+  .wave-row:nth-child(even) .block { animation-delay: calc(var(--i, 0) * 0.15s + 0.5s); }
+  @keyframes pulse {
+    0%%, 100%% { opacity: 0.15; transform: scale(0.8); background: #2d6a4f; }
+    50%%      { opacity: 0.6;  transform: scale(1.1); background: #52b788; }
+  }
+
+  /* \u2500\u2500 Content card \u2500\u2500 */
+  .card {
+    position: relative;
+    z-index: 1;
+    background: rgba(16, 24, 20, 0.85);
+    backdrop-filter: blur(24px);
+    border: 1px solid rgba(82, 183, 136, 0.2);
+    border-radius: 16px;
+    padding: 48px 44px;
+    max-width: 560px;
+    width: 90vw;
+    text-align: center;
+  }
+  .logo { font-size: 42px; margin-bottom: 8px; }
+  .brand {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    color: #b7e4c7;
+    margin-bottom: 4px;
+  }
+  .brand span { color: #52b788; }
+  .subtitle {
+    font-size: 14px;
+    color: #6b8f7b;
+    margin-bottom: 28px;
+  }
+  .divider {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #2d6a4f, transparent);
+    margin: 24px 0;
+  }
+
+  /* \u2500\u2500 Steps \u2500\u2500 */
+  .steps {
+    text-align: left;
+    margin: 20px 0;
+  }
+  .step {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 0;
+    font-size: 14px;
+    line-height: 1.5;
+    color: #a7c4b2;
+  }
+  .step-num {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%%;
+    background: #1b4332;
+    color: #52b788;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  /* \u2500\u2500 Code block \u2500\u2500 */
+  .codeblock {
+    position: relative;
+    background: #0d1410;
+    border: 1px solid rgba(82, 183, 136, 0.15);
+    border-radius: 10px;
+    padding: 16px 18px;
+    text-align: left;
+    margin: 16px 0;
+  }
+  .codeblock pre {
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-size: 12.5px;
+    line-height: 1.7;
+    color: #95d5b2;
+    white-space: pre;
+    overflow-x: auto;
+    margin: 0;
+  }
+  .codeblock .comment { color: #4a7a5e; }
+  .codeblock .key     { color: #74c69d; }
+  .codeblock .val     { color: #d8f3dc; }
+  .copy-btn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: rgba(45, 106, 79, 0.3);
+    border: 1px solid rgba(82, 183, 136, 0.3);
+    color: #95d5b2;
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .copy-btn:hover { background: rgba(45, 106, 79, 0.6); }
+  .copy-btn:active { transform: scale(0.95); }
+
+  /* \u2500\u2500 Mention tip \u2500\u2500 */
+  .tip {
+    background: rgba(45, 106, 79, 0.15);
+    border: 1px solid rgba(82, 183, 136, 0.2);
+    border-radius: 10px;
+    padding: 14px 18px;
+    text-align: left;
+    margin: 16px 0;
+    font-size: 13.5px;
+    line-height: 1.6;
+    color: #a7c4b2;
+  }
+  .tip strong { color: #b7e4c7; }
+  .tip code {
+    background: rgba(45, 106, 79, 0.3);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 12px;
+    color: #d8f3dc;
+  }
+
+  /* \u2500\u2500 Footer \u2500\u2500 */
+  .footer {
+    margin-top: 24px;
+    font-size: 13px;
+    color: #4a7a5e;
+  }
+</style>
+</head>
+<body>
+
+<!-- Diagonal wave blocks -->
+<div class="waves">
+  <div class="wave-row">
+    <div class="block" style="--i:0"></div><div class="block" style="--i:1"></div>
+    <div class="block" style="--i:2"></div><div class="block" style="--i:3"></div>
+    <div class="block" style="--i:4"></div><div class="block" style="--i:5"></div>
+  </div>
+  <div class="wave-row">
+    <div class="block" style="--i:6"></div><div class="block" style="--i:7"></div>
+    <div class="block" style="--i:8"></div><div class="block" style="--i:9"></div>
+    <div class="block" style="--i:10"></div>
+  </div>
+  <div class="wave-row">
+    <div class="block" style="--i:0"></div><div class="block" style="--i:1"></div>
+    <div class="block" style="--i:2"></div><div class="block" style="--i:3"></div>
+    <div class="block" style="--i:4"></div><div class="block" style="--i:5"></div>
+    <div class="block" style="--i:6"></div>
+  </div>
+  <div class="wave-row">
+    <div class="block" style="--i:3"></div><div class="block" style="--i:4"></div>
+    <div class="block" style="--i:5"></div><div class="block" style="--i:6"></div>
+  </div>
+  <div class="wave-row">
+    <div class="block" style="--i:7"></div><div class="block" style="--i:8"></div>
+    <div class="block" style="--i:9"></div><div class="block" style="--i:10"></div>
+    <div class="block" style="--i:11"></div><div class="block" style="--i:12"></div>
+  </div>
+  <div class="wave-row">
+    <div class="block" style="--i:2"></div><div class="block" style="--i:3"></div>
+    <div class="block" style="--i:4"></div><div class="block" style="--i:5"></div>
+    <div class="block" style="--i:6"></div>
+  </div>
+  <div class="wave-row">
+    <div class="block" style="--i:5"></div><div class="block" style="--i:6"></div>
+    <div class="block" style="--i:7"></div><div class="block" style="--i:8"></div>
+    <div class="block" style="--i:9"></div><div class="block" style="--i:10"></div>
+  </div>
+  <div class="wave-row">
+    <div class="block" style="--i:1"></div><div class="block" style="--i:2"></div>
+    <div class="block" style="--i:3"></div><div class="block" style="--i:4"></div>
+  </div>
+  <div class="wave-row">
+    <div class="block" style="--i:4"></div><div class="block" style="--i:5"></div>
+    <div class="block" style="--i:6"></div><div class="block" style="--i:7"></div>
+    <div class="block" style="--i:8"></div><div class="block" style="--i:9"></div>
+    <div class="block" style="--i:10"></div>
+  </div>
+  <div class="wave-row">
+    <div class="block" style="--i:0"></div><div class="block" style="--i:1"></div>
+    <div class="block" style="--i:2"></div><div class="block" style="--i:3"></div>
+    <div class="block" style="--i:4"></div>
+  </div>
 </div>
+
+<!-- Content -->
+<div class="card">
+  <div class="logo">\xf0\x9f\x8c\xbf</div>
+  <div class="brand">\xf0\x9f\x8c\xbf <span>Ivy</span></div>
+  <div class="subtitle">ClickUp workspace connected</div>
+
+  <div class="divider"></div>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div>Return to your terminal to finish workspace, space, and list selection.</div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div>Add the generated <code style="background:rgba(45,106,79,0.3);padding:2px 6px;border-radius:4px;font-family:'SF Mono','Fira Code',monospace;font-size:12px;color:#d8f3dc">.env</code> vars to your vine config.</div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div>Set <code style="background:rgba(45,106,79,0.3);padding:2px 6px;border-radius:4px;font-family:'SF Mono','Fira Code',monospace;font-size:12px;color:#d8f3dc">agent_username</code> so the bot responds to @mentions.</div>
+    </div>
+  </div>
+
+  <div class="codeblock">
+    <button class="copy-btn" onclick="copyEnv()">Copy</button>
+    <pre id="env-block"><span class="comment"># .env \u2014 paste into your vine config or .env file</span>
+<span class="key">IVY_CLICKUP_API_TOKEN</span>=<span class="val">"%s"</span>
+<span class="key">IVY_CLICKUP_TEAM_ID</span>=<span class="val">"&lt;from terminal&gt;"</span>
+<span class="key">IVY_CLICKUP_AUTH_MODE</span>=<span class="val">"oauth"</span>
+<span class="key">IVY_CLICKUP_SPACE_ID</span>=<span class="val">"&lt;from terminal&gt;"</span>
+<span class="key">IVY_CLICKUP_LIST_ID</span>=<span class="val">"&lt;from terminal&gt;"</span>
+</pre>
+  </div>
+
+  <div class="tip">
+    <strong>\xf0\x9f\x92\xac Triggering the agent:</strong> In any ClickUp task comment, type
+    <code>@IvyAgent</code> to summon Ivy (the default username). You can also assign tasks
+    directly to the agent user and it will pick them up automatically.
+  </div>
+
+  <div class="footer">This tab can be closed safely.</div>
+</div>
+
+<script>
+function copyEnv() {
+  const block = document.getElementById('env-block');
+  const text = block.innerText;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.querySelector('.copy-btn');
+    btn.textContent = '\u2713 Copied!';
+    setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+  });
+}
+</script>
 </body>
 </html>`
 
 const callbackErrorPage = `<!DOCTYPE html>
-<html>
-<head><title>Ivy — Error</title></head>
-<body style="font-family:-apple-system,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#f5f5f5">
-<div style="text-align:center">
-<h1 style="color:#c44">✗ Authorization Failed</h1>
-<p><b>%s</b>: %s</p>
-<p>Please return to your terminal and try again.</p>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ivy — Error</title>
+</head>
+<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#0a0f0d;color:#e0e8e4">
+<div style="text-align:center;max-width:480px;padding:40px">
+<h1 style="color:#e07070;font-size:24px;margin-bottom:16px">✗ Authorization Failed</h1>
+<p style="margin-bottom:8px"><b>%s</b>: %s</p>
+<p style="color:#6b8f7b;margin-top:20px">Please return to your terminal and try again.</p>
 </div>
 </body>
 </html>`

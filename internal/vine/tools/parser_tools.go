@@ -10,9 +10,17 @@ import (
 	"github.com/aspectrr/ivy/internal/ivyv1"
 )
 
+// LeafHostInfo holds summary info about a connected leaf daemon.
+type LeafHostInfo struct {
+	HostID      string   `json:"host_id"`
+	Hostname    string   `json:"hostname"`
+	AllowedDirs []string `json:"allowed_dirs"`
+}
+
 // LeafManager is the interface parser tools use to route commands to leaf daemons.
 type LeafManager interface {
 	SendCommandAndWait(ctx context.Context, hostID string, req *ivyv1.ExecuteCommandRequest) (*ivyv1.CommandOutput, error)
+	ListConnectedLeaves() []LeafHostInfo
 }
 
 // parserHostTool executes read-only commands on remote parser hosts via gRPC.
@@ -27,7 +35,7 @@ func (t *parserHostTool) Definition() ToolDef {
 	return ToolDef{
 		Name:        t.name,
 		Description: t.description,
-		Parameters:  json.RawMessage(`{"type":"object","properties":{"args":{"type":"string","description":"Command arguments (space-separated)"},"host":{"type":"string","description":"Parser host ID (optional, uses default if omitted)"}},"required":["args"]}`),
+		Parameters:  json.RawMessage(`{"type":"object","properties":{"args":{"type":"string","description":"Command arguments (space-separated)"},"host":{"type":"string","description":"Parser host ID (required). Use list_parser_hosts to discover available hosts."}},"required":["args","host"]}`),
 	}
 }
 
@@ -42,6 +50,10 @@ func (t *parserHostTool) Execute(ctx context.Context, args json.RawMessage, _ To
 
 	if t.leafMgr == nil {
 		return nil, fmt.Errorf("parser host tools not available: no leaf manager configured")
+	}
+
+	if params.Host == "" {
+		return nil, fmt.Errorf("host is required: use the list_parser_hosts tool to discover available hosts")
 	}
 
 	// Split args string into individual arguments
@@ -104,6 +116,37 @@ var commandNameToProto = map[string]ivyv1.CommandType{
 	"tail":             ivyv1.CommandType_TAIL,
 	"systemctl_status": ivyv1.CommandType_SYSTEMCTL_STATUS,
 	"journalctl":       ivyv1.CommandType_JOURNALCTL,
+}
+
+// --- list_parser_hosts ---
+
+// leafHostsTool lists all parser hosts that currently have a leaf daemon connected.
+// The agent can use this to discover which hosts are reachable before running
+// commands on them.
+type leafHostsTool struct {
+	leafMgr LeafManager
+}
+
+func (t *leafHostsTool) Definition() ToolDef {
+	return ToolDef{
+		Name:        "list_parser_hosts",
+		Description: "List all parser hosts that currently have a leaf daemon installed and connected. Returns host ID, hostname, and allowed directories for each connected host. Use this to check which hosts are reachable before running parser commands on them.",
+		Parameters:  json.RawMessage(`{"type":"object","properties":{},"required":[]}`),
+	}
+}
+
+func (t *leafHostsTool) Execute(_ context.Context, _ json.RawMessage, _ ToolContext) (json.RawMessage, error) {
+	if t.leafMgr == nil {
+		return nil, fmt.Errorf("leaf host listing not available: no leaf manager configured")
+	}
+
+	hosts := t.leafMgr.ListConnectedLeaves()
+
+	result := map[string]interface{}{
+		"hosts": hosts,
+		"count": len(hosts),
+	}
+	return json.Marshal(result)
 }
 
 // RegisterParserTools registers all log parser host tools.
@@ -171,5 +214,11 @@ func RegisterParserTools(registry *Registry, leafMgr LeafManager) error {
 			return err
 		}
 	}
+
+	// Register the list_parser_hosts listing tool.
+	if err := registry.Register(&leafHostsTool{leafMgr: leafMgr}); err != nil {
+		return err
+	}
+
 	return nil
 }

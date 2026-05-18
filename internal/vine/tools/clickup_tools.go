@@ -13,6 +13,7 @@ type ClickUpClient interface {
 	GetTask(ctx context.Context, taskID string) (*clickup.Task, error)
 	UpdateTask(ctx context.Context, taskID string, updates map[string]interface{}) (*clickup.Task, error)
 	PostComment(ctx context.Context, taskID string, text string) (*clickup.Comment, error)
+	ReplyToComment(ctx context.Context, commentID json.Number, text string) (*clickup.Comment, error)
 	GetComments(ctx context.Context, taskID string) ([]clickup.Comment, error)
 	GetAttachments(ctx context.Context, taskID string) ([]clickup.Attachment, error)
 	GetTeamTasks(ctx context.Context, opts *clickup.TaskListOpts) ([]clickup.Task, error)
@@ -123,7 +124,7 @@ func RegisterClickUpTools(registry *Registry, client ClickUpClient) error {
 		},
 		{
 			name:        "clickup_post_comment",
-			description: "Post a comment on a ClickUp task. Use this to report findings, ask questions, or provide status updates.",
+			description: "Post a comment on a ClickUp task. Use this to report your final findings, status updates, or ask questions. The user can only see comments posted via this tool — they cannot see your internal reasoning.",
 			parameters:  json.RawMessage(`{"type":"object","properties":{"task_id":{"type":"string","description":"The ClickUp task ID"},"text":{"type":"string","description":"Comment text (supports markdown)"}},"required":["task_id","text"]}`),
 			client:      client,
 			execute: func(ctx context.Context, args json.RawMessage, c ClickUpClient) (json.RawMessage, error) {
@@ -135,6 +136,26 @@ func RegisterClickUpTools(registry *Registry, client ClickUpClient) error {
 					return nil, fmt.Errorf("parsing args: %w", err)
 				}
 				comment, err := c.PostComment(ctx, params.TaskID, params.Text)
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(comment)
+			},
+		},
+		{
+			name:        "clickup_reply_comment",
+			description: "Reply to a specific ClickUp comment in a thread. Use this when you want to respond directly to a user's comment.",
+			parameters:  json.RawMessage(`{"type":"object","properties":{"comment_id":{"type":"integer","description":"The ClickUp comment ID to reply to"},"text":{"type":"string","description":"Reply text (supports markdown)"}},"required":["comment_id","text"]}`),
+			client:      client,
+			execute: func(ctx context.Context, args json.RawMessage, c ClickUpClient) (json.RawMessage, error) {
+				var params struct {
+					CommentID json.Number `json:"comment_id"`
+					Text      string      `json:"text"`
+				}
+				if err := json.Unmarshal(args, &params); err != nil {
+					return nil, fmt.Errorf("parsing args: %w", err)
+				}
+				comment, err := c.ReplyToComment(ctx, params.CommentID, params.Text)
 				if err != nil {
 					return nil, err
 				}

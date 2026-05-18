@@ -47,6 +47,12 @@ func New(
 	}
 }
 
+// SetTools wires tool definitions into the context builder so they are
+// included in LLM chat completion requests.
+func (o *Orchestrator) SetTools(tools []ToolDef) {
+	o.ctxBuilder.SetTools(tools)
+}
+
 // StartRun begins an agent loop for the given session.
 func (o *Orchestrator) StartRun(ctx context.Context, sessionID string) error {
 	sess, err := o.sessions.Get(ctx, sessionID)
@@ -160,11 +166,13 @@ func (o *Orchestrator) runLoop(ctx context.Context, sessionID string) {
 	logger := o.logger.With("session_id", sessionID)
 	logger.Info("agent loop started")
 
-	for {
+	const maxIterations = 30
+	for iteration := 0; iteration < maxIterations; iteration++ {
 		// Check if session is still running.
 		sess, err := o.sessions.Get(ctx, sessionID)
 		if err != nil {
 			logger.Error("failed to get session", "error", err)
+			_ = o.Terminate(ctx, sessionID, true)
 			return
 		}
 		if sess.Status != model.StatusRunning {
@@ -208,7 +216,12 @@ func (o *Orchestrator) runLoop(ctx context.Context, sessionID string) {
 			}
 		}
 
-		// Call the LLM.
+		logger.Info("calling LLM",
+			"model", o.llm.model,
+			"message_count", len(messages),
+			"tools_count", len(o.ctxBuilder.tools),
+		)
+
 		resp, err := o.llm.Chat(ctx, ChatRequest{
 			Model:    "", // use default from config
 			Messages: messages,
@@ -220,17 +233,36 @@ func (o *Orchestrator) runLoop(ctx context.Context, sessionID string) {
 				Message:     fmt.Sprintf("LLM call failed: %v", err),
 				Recoverable: true,
 			}))
-			// Don't terminate — the loop will retry on next iteration.
-			// In production, add backoff/retry logic.
+			_ = o.Terminate(ctx, sessionID, true)
 			return
 		}
 
+		pt, ct, tt := 0, 0, 0
+		if resp.Usage != nil {
+			pt = resp.Usage.PromptTokens
+			ct = resp.Usage.CompletionTokens
+			tt = resp.Usage.TotalTokens
+		}
+		logger.Info("LLM response received",
+			"choices", len(resp.Choices),
+			"prompt_tokens", pt,
+			"completion_tokens", ct,
+			"total_tokens", tt,
+		)
+
 		if len(resp.Choices) == 0 {
 			logger.Error("LLM returned no choices")
+			_ = o.Terminate(ctx, sessionID, true)
 			return
 		}
 
 		choice := resp.Choices[0]
+
+		logger.Info("LLM choice",
+			"finish_reason", choice.FinishReason,
+			"content_len", len(choice.Message.Content),
+			"tool_calls", len(choice.Message.ToolCalls),
+		)
 
 		// Handle tool calls.
 		if len(choice.Message.ToolCalls) > 0 {
@@ -295,7 +327,10 @@ func (o *Orchestrator) runLoop(ctx context.Context, sessionID string) {
 		}
 
 		// No content and no tool calls — stop.
-		logger.Warn("LLM returned empty message with no tool calls")
+		logger.Warn("LLM returned empty message with no tool calls",
+			"finish_reason", choice.FinishReason,
+			"message", fmt.Sprintf("%+v", choice.Message),
+		)
 		_ = o.Terminate(ctx, sessionID, false)
 		return
 	}

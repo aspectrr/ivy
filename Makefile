@@ -75,7 +75,7 @@ docker-build:
 	@echo "Building agent-sandbox image..."
 	docker build -f deploy/docker/agent-sandbox.Dockerfile -t ivy-agent-sandbox:latest .
 	@echo "Building pipeline-sandbox images..."
-	docker compose -f deploy/docker/pipeline-sandbox-compose.yml build
+	docker compose -f deploy/docker/docker-compose.pipeline-sandbox.yaml build
 
 ## docker-local-build: Build images for local testing (vine + leaf + sandbox images)
 docker-local-build: docker-build
@@ -87,7 +87,7 @@ docker-local-build: docker-build
 
 ## docker-local: Start the full local testing stack
 docker-local:
-	docker compose -f deploy/docker/docker-compose.local.yml up -d
+	docker compose --env-file .env -f deploy/docker/docker-compose.local.yaml up
 	@echo ""
 	@echo "Ivy local stack is running."
 	@echo "  Vine gRPC:  localhost:50051"
@@ -99,11 +99,7 @@ docker-local:
 
 ## docker-local-down: Stop the local testing stack
 docker-local-down:
-	docker compose -f deploy/docker/docker-compose.local.yml down
-
-## docker-local-logs: Tail logs from the local stack
-docker-local-logs:
-	docker compose -f deploy/docker/docker-compose.local.yml logs -f
+	docker compose --env-file .env -f deploy/docker/docker-compose.local.yaml down
 
 ## clean: Remove build artifacts
 clean:

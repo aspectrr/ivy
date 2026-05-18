@@ -44,4 +44,4 @@ connectors:
     poll_interval: "30s"
     proxy: "" # HTTP proxy URL, e.g. http://proxy.corp.internal:3128 (optional)
     webhook_secret: "" # Set via IVY_CLICKUP_WEBHOOK_SECRET env var
-    agent_username: "" # ClickUp username for @mention detection (e.g. "ivy-agent"). Set via IVY_CLICKUP_AGENT_USERNAME env var
+    agent_username: "" # ClickUp username for @mention detection. Default: IvyAgent. Set via IVY_CLICKUP_AGENT_USERNAME env var

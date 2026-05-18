@@ -80,8 +80,11 @@ type ClickUpConfig struct {
 	PollInterval  time.Duration `yaml:"poll_interval"`
 	Proxy         string        `yaml:"proxy"`
 	WebhookSecret string        `yaml:"webhook_secret"`
-	AgentUsername string        `yaml:"agent_username"` // ClickUp username to detect @mentions in comments
+	AgentUsername string        `yaml:"agent_username"` // ClickUp username to detect @mentions in comments (default: IvyAgent)
 }
+
+// DefaultAgentUsername is used when agent_username is not set.
+const DefaultAgentUsername = "Ivy Agent"
 
 // AuthModeResolved returns the effective auth mode, auto-detecting from the
 // token prefix if not explicitly set.
@@ -124,6 +127,9 @@ func LoadConfig(path string) (*Config, error) {
 	if v := os.Getenv("IVY_LLM_MODEL"); v != "" {
 		cfg.LLM.DefaultModel = v
 	}
+	if v := os.Getenv("IVY_CLICKUP_ENABLED"); v != "" {
+		cfg.Connectors.ClickUp.Enabled = strings.EqualFold(v, "true") || v == "1"
+	}
 	if v := os.Getenv("IVY_CLICKUP_WEBHOOK_SECRET"); v != "" {
 		cfg.Connectors.ClickUp.WebhookSecret = v
 	}
@@ -133,11 +139,23 @@ func LoadConfig(path string) (*Config, error) {
 	if v := os.Getenv("IVY_CLICKUP_TEAM_ID"); v != "" {
 		cfg.Connectors.ClickUp.TeamID = v
 	}
+	if v := os.Getenv("IVY_CLICKUP_SPACE_ID"); v != "" {
+		cfg.Connectors.ClickUp.SpaceID = v
+	}
+	if v := os.Getenv("IVY_CLICKUP_LIST_ID"); v != "" {
+		cfg.Connectors.ClickUp.ListID = v
+	}
+	if v := os.Getenv("IVY_CLICKUP_AUTH_MODE"); v != "" {
+		cfg.Connectors.ClickUp.AuthMode = v
+	}
 	if v := os.Getenv("IVY_CLICKUP_PROXY"); v != "" {
 		cfg.Connectors.ClickUp.Proxy = v
 	}
 	if v := os.Getenv("IVY_CLICKUP_AGENT_USERNAME"); v != "" {
 		cfg.Connectors.ClickUp.AgentUsername = v
+	}
+	if cfg.Connectors.ClickUp.AgentUsername == "" {
+		cfg.Connectors.ClickUp.AgentUsername = DefaultAgentUsername
 	}
 	if v := os.Getenv("IVY_CLICKUP_AUTH_MODE"); v != "" {
 		cfg.Connectors.ClickUp.AuthMode = v

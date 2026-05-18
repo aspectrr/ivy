@@ -87,6 +87,7 @@ func main() {
 
 	// ── Leaf manager & gRPC server ────────────────────────────
 	leafManager := leafmgr.NewManager(logger)
+	leafAdapter := &leafManagerAdapter{mgr: leafManager}
 
 	grpcServer, err := newGRPCServer(cfg)
 	if err != nil {
@@ -139,7 +140,7 @@ func main() {
 	}
 
 	// Parser host tools (exec on remote leaf daemons)
-	if err := tools.RegisterParserTools(registry, leafManager); err != nil {
+	if err := tools.RegisterParserTools(registry, leafAdapter); err != nil {
 		slog.Error("failed to register parser tools", "error", err)
 		os.Exit(1)
 	}
@@ -147,6 +148,15 @@ func main() {
 	// Pipeline tools
 	if err := tools.RegisterPipelineTools(registry, pipelineProviderAdapter{mgr: pipelineMgr}); err != nil {
 		slog.Error("failed to register pipeline tools", "error", err)
+		os.Exit(1)
+	}
+
+	// Sandbox creation tool
+	if err := registry.Register(&tools.CreateSandboxTool{
+		Creator:    pipelineProviderAdapter{mgr: pipelineMgr},
+		LeafRunner: leafAdapter,
+	}); err != nil {
+		slog.Error("failed to register create_sandbox tool", "error", err)
 		os.Exit(1)
 	}
 
@@ -187,9 +197,26 @@ func main() {
 		sessions,
 		events,
 		llmClient,
-		&toolExecutorAdapter{registry: registry},
+		&toolExecutorAdapter{registry: registry, sandboxMgr: sandboxMgr},
 		logger,
 	)
+
+	// Wire tool definitions from the registry into the orchestrator's context builder
+	// so they are sent to the LLM on each chat completion request.
+	registryDefs := registry.List()
+	orchTools := make([]orchestrator.ToolDef, len(registryDefs))
+	for i, td := range registryDefs {
+		orchTools[i] = orchestrator.ToolDef{
+			Type: "function",
+			Function: orchestrator.FunctionDef{
+				Name:        td.Name,
+				Description: td.Description,
+				Parameters:  td.Parameters,
+			},
+		}
+	}
+	orchestratorInst.SetTools(orchTools)
+	slog.Info("wired tool definitions to orchestrator", "count", len(orchTools))
 
 	// ── ClickUp poller ────────────────────────────────────────
 	var clickupPoller *clickup.Poller
@@ -316,7 +343,75 @@ func main() {
 					return
 				}
 
-				// Existing session — append mention as a new user message.
+				// Existing session — check if it can be resumed or needs a new one.
+				if sess.Status == model.StatusCompleted || sess.Status == model.StatusRunning {
+					// Previous session finished (or stale running) — clear its source link and create a fresh one.
+					if sess.Status == model.StatusRunning {
+						slog.Warn("existing session still running, terminating and creating new session",
+							"old_session_id", sess.ID,
+							"task_id", sourceID,
+						)
+						_ = orchestratorInst.Terminate(ctx, sess.ID, true)
+					} else {
+						slog.Info("existing session completed, creating new session for mention",
+							"old_session_id", sess.ID,
+							"task_id", sourceID,
+						)
+					}
+
+					if err := sessions.ClearSource(ctx, sess.ID); err != nil {
+						slog.Error("failed to clear source on completed session",
+							"session_id", sess.ID,
+							"error", err,
+						)
+						return
+					}
+
+					description := task.Description
+					if description == "" {
+						description = "(no description)"
+					}
+
+					mentionCommentInfo := fmt.Sprintf("\nMention Comment ID: %s (use clickup_reply_comment with this ID to reply in-thread)", mention.CommentID.String())
+					mentionContext := fmt.Sprintf("[ClickUp Task: %s — %s mentioned the agent]\nURL: %s\nStatus: %s\n\n%s%s%s",
+						task.Name, mention.Author, task.URL, task.Status.Status, description, commentsContext, mentionCommentInfo)
+
+					newSess, err := sessions.Create(ctx, "clickup", sourceID, json.RawMessage(`{}`))
+					if err != nil {
+						slog.Error("failed to create new session for mentioned clickup task",
+							"task_id", sourceID,
+							"error", err,
+						)
+						return
+					}
+
+					if _, err := events.Append(ctx, newSess.ID, model.EventTypeUserMessage, mustJSON(model.UserMessagePayload{
+						Content: mentionContext,
+					})); err != nil {
+						slog.Error("failed to seed mention message for new clickup session",
+							"session_id", newSess.ID,
+							"error", err,
+						)
+						return
+					}
+
+					if err := orchestratorInst.StartRun(ctx, newSess.ID); err != nil {
+						slog.Error("failed to start run for new mentioned clickup task",
+							"session_id", newSess.ID,
+							"error", err,
+						)
+						return
+					}
+					slog.Info("started agent run in new session for mentioned clickup task",
+						"session_id", newSess.ID,
+						"old_session_id", sess.ID,
+						"task_id", sourceID,
+						"mentioned_by", mention.Author,
+					)
+					return
+				}
+
+				// Session is suspended or failed — append mention and resume.
 				mentionMsg := fmt.Sprintf("[%s mentioned the agent in ClickUp]\n\"%s\"",
 					mention.Author, mention.CommentText)
 
@@ -346,6 +441,137 @@ func main() {
 				return
 			}
 
+			// Handle thread reply mentions — resume existing session with thread context.
+			if reason == clickup.ReasonThreadMentioned && mention != nil {
+				slog.Info("thread mention detected",
+					"task_id", sourceID,
+					"mention_author", mention.Author,
+					"parent_comment_id", mention.ParentCommentID,
+				)
+
+				// Fetch all replies in the thread for full context.
+				var threadContext string
+				if mention.ParentCommentID.String() != "" {
+					replies, err := clickupClient.GetCommentReplies(ctx, mention.ParentCommentID)
+					if err != nil {
+						slog.Warn("failed to fetch thread replies for context",
+							"parent_comment_id", mention.ParentCommentID,
+							"error", err,
+						)
+					} else {
+						var sb strings.Builder
+						sb.WriteString("\n--- Thread Replies ---\n")
+						for _, r := range replies {
+							fmt.Fprintf(&sb, "[%s]: %s\n", r.User.Username, r.CommentText)
+						}
+						threadContext = sb.String()
+					}
+				}
+
+				sess, err := sessions.GetBySource(ctx, "clickup", sourceID)
+				if err != nil {
+					slog.Error("failed to lookup session for thread mention",
+						"task_id", sourceID,
+						"error", err,
+					)
+					return
+				}
+
+				if sess == nil {
+					slog.Warn("no existing session for thread mention, skipping",
+						"task_id", sourceID,
+					)
+					return
+				}
+
+				// If still running, terminate it first.
+				if sess.Status == model.StatusRunning {
+					slog.Warn("terminating running session for thread mention",
+						"session_id", sess.ID,
+						"task_id", sourceID,
+					)
+					_ = orchestratorInst.Terminate(ctx, sess.ID, true)
+					sess.Status = model.StatusFailed
+				}
+
+				// For completed/failed sessions, clear source and create a new one.
+				// For suspended sessions, append and resume.
+				if sess.Status == model.StatusSuspended {
+					followUpMsg := fmt.Sprintf("[%s replied in thread]\n\"%s\"%s\n\nIMPORTANT: You are responding in a thread. Use clickup_reply_comment with comment_id=%s to reply. Do NOT use clickup_post_comment.",
+						mention.Author, mention.CommentText, threadContext, mention.ParentCommentID.String())
+
+					if _, err := events.Append(ctx, sess.ID, model.EventTypeUserMessage, mustJSON(model.UserMessagePayload{
+						Content: followUpMsg,
+					})); err != nil {
+						slog.Error("failed to append thread mention to session",
+							"session_id", sess.ID,
+							"error", err,
+						)
+						return
+					}
+
+					if err := orchestratorInst.Resume(ctx, sess.ID); err != nil {
+						slog.Error("failed to resume session for thread mention",
+							"session_id", sess.ID,
+							"error", err,
+						)
+						return
+					}
+					slog.Info("resumed session for thread mention",
+						"session_id", sess.ID,
+						"task_id", sourceID,
+						"mentioned_by", mention.Author,
+					)
+				} else {
+					// Completed or failed — clear source, create new session.
+					if err := sessions.ClearSource(ctx, sess.ID); err != nil {
+						slog.Error("failed to clear source on old session",
+							"session_id", sess.ID,
+							"error", err,
+						)
+						return
+					}
+
+					followUpMsg := fmt.Sprintf("[ClickUp Thread Follow-up: %s — %s replied]\nTask: %s\nURL: %s\n\n[%s]: %s%s\n\nIMPORTANT: You are responding in a thread. Use clickup_reply_comment with comment_id=%s to reply. Do NOT use clickup_post_comment.",
+						task.Name, mention.Author, task.Name, task.URL,
+						mention.Author, mention.CommentText, threadContext, mention.ParentCommentID.String())
+
+					newSess, err := sessions.Create(ctx, "clickup", sourceID, json.RawMessage(`{}`))
+					if err != nil {
+						slog.Error("failed to create new session for thread mention",
+							"task_id", sourceID,
+							"error", err,
+						)
+						return
+					}
+
+					if _, err := events.Append(ctx, newSess.ID, model.EventTypeUserMessage, mustJSON(model.UserMessagePayload{
+						Content: followUpMsg,
+					})); err != nil {
+						slog.Error("failed to seed thread follow-up message",
+							"session_id", newSess.ID,
+							"error", err,
+						)
+						return
+					}
+
+					if err := orchestratorInst.StartRun(ctx, newSess.ID); err != nil {
+						slog.Error("failed to start run for thread mention",
+							"session_id", newSess.ID,
+							"error", err,
+						)
+						return
+					}
+					slog.Info("started new session for thread mention",
+						"session_id", newSess.ID,
+						"old_session_id", sess.ID,
+						"task_id", sourceID,
+						"mentioned_by", mention.Author,
+					)
+				}
+				return
+			}
+
 			// Handle task updates (assigned or generic update).
 			sess, err := sessions.GetBySource(ctx, "clickup", sourceID)
 			if err != nil {
@@ -364,19 +590,11 @@ func main() {
 			}
 
 			if sess.Status == model.StatusRunning {
-				// Already running — append the update as a new user message
-				// so the agent loop picks it up on the next turn.
-				updateMsg := fmt.Sprintf("[ClickUp Task Updated: %s]\nStatus: %s\nURL: %s",
-					task.Name, task.Status.Status, task.URL)
-				if _, err := events.Append(ctx, sess.ID, model.EventTypeUserMessage, mustJSON(model.UserMessagePayload{
-					Content: updateMsg,
-				})); err != nil {
-					slog.Error("failed to append update message to running session",
-						"session_id", sess.ID,
-						"error", err,
-					)
-				}
-				slog.Info("appended update to running session",
+				// Already running — skip to avoid feedback loop.
+				// The agent's own actions (posting comments, updating tasks) trigger
+				// task updates, which would be injected back as user messages,
+				// causing the agent to respond to itself indefinitely.
+				slog.Info("skipping update for running session",
 					"session_id", sess.ID,
 					"task_id", sourceID,
 				)
@@ -556,12 +774,22 @@ func mustJSON(v interface{}) json.RawMessage {
 
 // toolExecutorAdapter adapts tools.Registry to orchestrator.ToolExecutor.
 type toolExecutorAdapter struct {
-	registry *tools.Registry
+	registry   *tools.Registry
+	sandboxMgr *vine.Manager
 }
 
 func (a *toolExecutorAdapter) ExecuteTool(ctx context.Context, name string, args json.RawMessage, sessionID string) (json.RawMessage, error) {
+	var sandbox *vine.Sandbox
+	if a.sandboxMgr != nil {
+		sb, err := a.sandboxMgr.Get(sessionID)
+		if err == nil && sb != nil {
+			sandbox = sb
+		}
+	}
+
 	return a.registry.Execute(ctx, name, args, tools.ToolContext{
 		SessionID: sessionID,
+		Sandbox:   sandbox,
 	})
 }
 
@@ -572,6 +800,10 @@ type pipelineProviderAdapter struct {
 
 func (a pipelineProviderAdapter) GetPipeline(sessionID string) (*vine.PipelineSandbox, error) {
 	return a.mgr.Get(sessionID)
+}
+
+func (a pipelineProviderAdapter) CreatePipeline(ctx context.Context, sessionID string, cfg vine.PipelineConfig) (*vine.PipelineSandbox, error) {
+	return a.mgr.Create(ctx, sessionID, cfg)
 }
 
 // skillsToolStoreAdapter adapts skills.Store to tools.SkillStore.
@@ -606,4 +838,29 @@ func (a *skillsToolStoreAdapter) GetSkill(ctx context.Context, name string) (*to
 		Content:     skill.Content,
 		BuiltIn:     skill.BuiltIn,
 	}, nil
+}
+
+// leafManagerAdapter adapts leafmgr.Manager to tools.LeafManager.
+// This is needed because leafmgr.Manager.ListConnectedLeaves returns
+// []leafmgr.LeafInfo, but the tools.LeafManager interface expects
+// []tools.LeafHostInfo. The adapter converts between the two types.
+type leafManagerAdapter struct {
+	mgr *leafmgr.Manager
+}
+
+func (a *leafManagerAdapter) SendCommandAndWait(ctx context.Context, hostID string, req *ivyv1.ExecuteCommandRequest) (*ivyv1.CommandOutput, error) {
+	return a.mgr.SendCommandAndWait(ctx, hostID, req)
+}
+
+func (a *leafManagerAdapter) ListConnectedLeaves() []tools.LeafHostInfo {
+	infos := a.mgr.ListConnectedLeaves()
+	result := make([]tools.LeafHostInfo, len(infos))
+	for i, info := range infos {
+		result[i] = tools.LeafHostInfo{
+			HostID:      info.HostID,
+			Hostname:    info.Hostname,
+			AllowedDirs: info.AllowedDirs,
+		}
+	}
+	return result
 }

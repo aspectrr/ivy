@@ -13,7 +13,7 @@ type SandboxBashTool struct{}
 func (t *SandboxBashTool) Definition() ToolDef {
 	return ToolDef{
 		Name:        "sandbox_bash",
-		Description: "Execute a bash command in the agent workspace sandbox. The sandbox is an isolated container with no network access.",
+		Description: "Execute a bash command in the agent workspace sandbox. You MUST call create_sandbox first to set up the environment before using this tool.",
 		Parameters:  json.RawMessage(`{"type":"object","properties":{"command":{"type":"string","description":"The bash command to execute"}},"required":["command"]}`),
 	}
 }
@@ -49,7 +49,7 @@ type SandboxReadFileTool struct{}
 func (t *SandboxReadFileTool) Definition() ToolDef {
 	return ToolDef{
 		Name:        "sandbox_read_file",
-		Description: "Read a file from the agent workspace sandbox.",
+		Description: "Read a file from the agent workspace sandbox. You MUST call create_sandbox first to set up the environment before using this tool.",
 		Parameters:  json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Absolute path to the file in the sandbox"}},"required":["path"]}`),
 	}
 }
@@ -81,7 +81,7 @@ type SandboxWriteFileTool struct{}
 func (t *SandboxWriteFileTool) Definition() ToolDef {
 	return ToolDef{
 		Name:        "sandbox_write_file",
-		Description: "Write content to a file in the agent workspace sandbox.",
+		Description: "Write content to a file in the agent workspace sandbox. You MUST call create_sandbox first to set up the environment before using this tool.",
 		Parameters:  json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Absolute path to the file in the sandbox"},"content":{"type":"string","description":"The content to write"}},"required":["path","content"]}`),
 	}
 }

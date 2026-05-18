@@ -157,7 +157,21 @@ func (s *Store) ListByStatus(ctx context.Context, status string, limit, offset i
 	return sessions, nil
 }
 
-// UpdateMetadata merges the given metadata into the session's existing metadata.
+// ClearSource removes the source association from a completed session,
+// allowing a new session to be created for the same source.
+// The old source_id is suffixed with the session UUID to keep it unique.
+func (s *Store) ClearSource(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE sessions SET source_id = source_id || '::archived::' || id::text WHERE id = $1
+	`, id)
+	if err != nil {
+		return fmt.Errorf("clearing session source: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("session %s: not found", id)
+	}
+	return nil
+}
 func (s *Store) UpdateMetadata(ctx context.Context, id string, metadata json.RawMessage) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE sessions SET metadata = metadata || $1 WHERE id = $2

@@ -22,7 +22,7 @@ type PipelineSendDataTool struct {
 func (t *PipelineSendDataTool) Definition() ToolDef {
 	return ToolDef{
 		Name:        "pipeline_send_data",
-		Description: "Send test data through the pipeline's Kafka broker. The data will be processed by Logstash and indexed in Elasticsearch.",
+		Description: "Send test data through the pipeline's Kafka broker. The data will be processed by Logstash and indexed in Elasticsearch. Requires a sandbox — call create_sandbox first.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -81,7 +81,7 @@ type PipelineQueryESTool struct {
 func (t *PipelineQueryESTool) Definition() ToolDef {
 	return ToolDef{
 		Name:        "pipeline_query_es",
-		Description: "Query the pipeline's Elasticsearch instance to verify data was processed. Use after pipeline_send_data to check results.",
+		Description: "Query the pipeline's Elasticsearch instance to verify data was processed. Use after pipeline_send_data to check results. Requires a sandbox — call create_sandbox first.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -136,7 +136,7 @@ type PipelineGetLogstashStatusTool struct {
 func (t *PipelineGetLogstashStatusTool) Definition() ToolDef {
 	return ToolDef{
 		Name:        "pipeline_get_logstash_status",
-		Description: "Get Logstash logs and status from the pipeline sandbox. Useful for debugging pipeline processing issues.",
+		Description: "Get Logstash logs and status from the pipeline sandbox. Useful for debugging pipeline processing issues. Requires a sandbox — call create_sandbox first.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -182,7 +182,7 @@ type PipelineUpdateConfigTool struct {
 func (t *PipelineUpdateConfigTool) Definition() ToolDef {
 	return ToolDef{
 		Name:        "pipeline_update_config",
-		Description: "Update the Logstash pipeline configuration and restart Logstash. The config is automatically rewritten to use Docker service names.",
+		Description: "Update the Logstash pipeline configuration and restart Logstash. The config is automatically rewritten to use Docker service names. Requires a sandbox — call create_sandbox first.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -233,7 +233,7 @@ type PipelineHealthTool struct {
 func (t *PipelineHealthTool) Definition() ToolDef {
 	return ToolDef{
 		Name:        "pipeline_health",
-		Description: "Check the health of all pipeline components (Redpanda, Elasticsearch, Logstash). Returns per-component status and an overall health assessment.",
+		Description: "Check the health of all pipeline components (Redpanda, Elasticsearch, Logstash). Returns per-component status and an overall health assessment. Requires a sandbox — call create_sandbox first.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {},

@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/aspectrr/ivy/internal/vine/connector/clickup"
@@ -33,6 +34,13 @@ func (m *mockClickUpClient) UpdateTask(_ context.Context, _ string, _ map[string
 }
 
 func (m *mockClickUpClient) PostComment(_ context.Context, _ string, _ string) (*clickup.Comment, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.comment, nil
+}
+
+func (m *mockClickUpClient) ReplyToComment(_ context.Context, _ json.Number, _ string) (*clickup.Comment, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -169,8 +177,8 @@ func TestClickUpPostComment_Execute(t *testing.T) {
 	reg := NewRegistry()
 	mock := &mockClickUpClient{
 		comment: &clickup.Comment{
-			ID:          "c1",
-			TaskID:      "t1",
+			ID:          json.Number("90140206770907"),
+			TaskID:      json.Number("90140206770900"),
 			CommentText: "Found the issue",
 		},
 	}
@@ -186,8 +194,11 @@ func TestClickUpPostComment_Execute(t *testing.T) {
 	if err := json.Unmarshal(result, &comment); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if comment["id"] != "c1" {
-		t.Errorf("comment id = %v, want c1", comment["id"])
+	// json.Number marshals as a number; large numbers become float64 when unmarshaled into map[string]interface{}
+	idFloat, _ := comment["id"].(float64)
+	id := fmt.Sprintf("%.0f", idFloat)
+	if id != "90140206770907" {
+		t.Errorf("comment id = %v, want 90140206770907", id)
 	}
 }
 

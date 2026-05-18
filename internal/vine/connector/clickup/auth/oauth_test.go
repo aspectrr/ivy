@@ -274,8 +274,11 @@ func TestDefaultOAuthApp_EnvOverride(t *testing.T) {
 
 func TestDefaultOAuthApp_NoEnv(t *testing.T) {
 	app := DefaultOAuthApp()
-	if app.ClientID != "" {
-		t.Errorf("ClientID should be empty without env, got %q", app.ClientID)
+	if app.ClientID == "" {
+		t.Errorf("ClientID should have a default value without env")
+	}
+	if app.ClientSecret == "" {
+		t.Errorf("ClientSecret should have a default value without env")
 	}
 }
 

@@ -98,11 +98,11 @@ type Space struct {
 
 // Comment represents a ClickUp task comment.
 type Comment struct {
-	ID          string `json:"id"`
-	TaskID      string `json:"task_id"`
-	User        User   `json:"user"`
-	CommentText string `json:"comment_text"`
-	Date        string `json:"date"`
+	ID          json.Number `json:"id"` // ClickUp is inconsistent: sometimes string, sometimes number
+	TaskID      json.Number `json:"task_id"`
+	User        User        `json:"user"`
+	CommentText string      `json:"comment_text"`
+	Date        json.Number `json:"date"` // Unix ms — can be string or number
 }
 
 // Attachment represents a ClickUp task attachment.
@@ -213,6 +213,20 @@ func (c *Client) UpdateTask(ctx context.Context, taskID string, updates map[stri
 	return &task, nil
 }
 
+// AddCommentReaction adds an emoji reaction to a comment.
+func (c *Client) AddCommentReaction(ctx context.Context, commentID json.Number, emoji string) error {
+	id, _ := commentID.Int64()
+	path := fmt.Sprintf("/comment/%d/reaction", id)
+	body, err := json.Marshal(map[string]interface{}{"reactions": []string{emoji}})
+	if err != nil {
+		return fmt.Errorf("marshaling reaction body: %w", err)
+	}
+	if err := c.doRequest(ctx, http.MethodPost, path, body, nil); err != nil {
+		return fmt.Errorf("adding reaction to comment %s: %w", commentID.String(), err)
+	}
+	return nil
+}
+
 // PostComment adds a comment to a task.
 func (c *Client) PostComment(ctx context.Context, taskID string, text string) (*Comment, error) {
 	path := fmt.Sprintf("/task/%s/comment", taskID)
@@ -228,12 +242,39 @@ func (c *Client) PostComment(ctx context.Context, taskID string, text string) (*
 	return &comment, nil
 }
 
+// ReplyToComment posts a threaded reply to an existing comment.
+func (c *Client) ReplyToComment(ctx context.Context, commentID json.Number, text string) (*Comment, error) {
+	id, _ := commentID.Int64()
+	path := fmt.Sprintf("/comment/%d/reply", id)
+	body, err := json.Marshal(map[string]interface{}{"comment_text": text, "notify_all": false})
+	if err != nil {
+		return nil, fmt.Errorf("marshaling reply body: %w", err)
+	}
+
+	var comment Comment
+	if err := c.doRequest(ctx, http.MethodPost, path, body, &comment); err != nil {
+		return nil, fmt.Errorf("replying to comment %s: %w", commentID.String(), err)
+	}
+	return &comment, nil
+}
+
 // GetComments fetches all comments for a task.
 func (c *Client) GetComments(ctx context.Context, taskID string) ([]Comment, error) {
 	path := fmt.Sprintf("/task/%s/comment", taskID)
 	var resp commentsResponse
 	if err := c.doRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
 		return nil, fmt.Errorf("getting comments for task %s: %w", taskID, err)
+	}
+	return resp.Comments, nil
+}
+
+// GetCommentReplies fetches all replies to a specific comment (thread).
+func (c *Client) GetCommentReplies(ctx context.Context, commentID json.Number) ([]Comment, error) {
+	id, _ := commentID.Int64()
+	path := fmt.Sprintf("/comment/%d/reply", id)
+	var resp commentsResponse
+	if err := c.doRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, fmt.Errorf("getting replies for comment %s: %w", commentID.String(), err)
 	}
 	return resp.Comments, nil
 }

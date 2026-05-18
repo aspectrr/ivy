@@ -83,22 +83,44 @@ export IVY_LLM_MODEL=mistralai/mistral-medium-3-5
 
 ### 4. Connect ClickUp
 
-The Ivy OAuth app is pre-configured in the CLI. Each organization just runs:
+Ivy uses a **guest user** in ClickUp so the agent posts comments under its own identity ("Ivy Agent") and is @mentionable. This requires no paid seat — view-only guests are free on all plans.
+
+#### Create the Ivy Agent guest user
+
+1. **Invite a guest** to your ClickUp workspace:
+   - Go to the Space or List where you want the agent to operate
+   - Click **Share** → invite by email (e.g. `ivy@yourdomain.com`)
+   - Set the name to **First: Ivy, Last: Agent**
+   - Give **view + comment** permissions
+
+2. **Accept the invite** — log in as the guest user via the email invitation
+
+3. **Generate a Personal API Token** for the guest:
+   - Go to **Settings → Apps → API Token → Generate**
+   - Copy the `pk_...` token
+
+4. **Share the relevant Space(s)/List(s)** with the guest so it can read tasks and post comments
+
+5. **Configure environment variables**:
+
+```bash
+export IVY_CLICKUP_ENABLED=true
+export IVY_CLICKUP_API_TOKEN=pk_your_guest_personal_token
+export IVY_CLICKUP_AUTH_MODE=personal
+export IVY_CLICKUP_TEAM_ID=your_team_id
+export IVY_CLICKUP_SPACE_ID=your_space_id
+export IVY_CLICKUP_LIST_ID=your_list_id        # optional, omit for entire space
+export IVY_CLICKUP_AGENT_USERNAME=Ivy Agent    # must match the guest's display name
+```
+
+Or use the CLI to discover your team/space/list IDs:
 
 ```bash
 go install github.com/aspectrr/ivy/cmd/ivy@latest
 ivy auth clickup
 ```
 
-This opens your browser for OAuth — you authorize your ClickUp workspace (no extra seat needed, any member can do this). Then the CLI walks you through:
-
-1. **Pick team** — auto-selected if you only have one workspace
-2. **Pick space** — choose where the agent should respond to `@mentions`
-3. **Pick list** — scope to a specific list, or select "all" for the entire space
-
-After selection, the CLI prints a complete config snippet with all IDs filled in — just paste it into your vine config.
-
-Each organization gets their own access token scoped to their workspace. No shared credentials, no inbound access to the vine host needed.
+The CLI walks you through picking your team, space, and list — then prints the config with all IDs filled in.
 
 To validate an existing token:
 
@@ -106,11 +128,14 @@ To validate an existing token:
 IVY_CLICKUP_API_TOKEN=your-token ivy auth clickup --validate
 ```
 
-For personal tokens (single user, less ideal for enterprise):
+#### Why a guest user?
 
-```bash
-ivy auth clickup --personal
-```
+ClickUp's API does not support bot users or app identities. All API actions (posting comments, etc.) are performed as the user who owns the token. By creating a dedicated guest user:
+
+- ✅ Comments appear under **"Ivy Agent"** instead of your name
+- ✅ The guest is **@mentionable** like any other user
+- ✅ View-only guests are **free** on Business and Enterprise plans
+- ✅ You can scope access to only the Spaces/Lists the agent needs
 
 ### 5. Build & Run
 
@@ -145,10 +170,4 @@ People interact with the agent in two ways:
 
 1. **Assign a task**: Create or assign an existing task to the agent user. The agent picks it up and starts working.
 
-2. **@mention in a comment**: Comment `@ivy-agent` on any task (the agent user must have access to that space). The agent will see the full task context plus the mention comment and start a session.
-
----
-
-## Architecture
-
-See [PRD.md](PRD.md) for the full product spec and [TASKS.md](TASKS.md) for the task breakdown.
+2. **@mention in a comment**: Comment `@Ivy Agent` on any task (the guest user must have access to that space). The agent will see the full task context plus the mention comment and start a session. It will react 🌿 to your comment and post a reply when done.

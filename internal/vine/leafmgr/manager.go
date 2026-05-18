@@ -84,6 +84,13 @@ func (m *Manager) GetLeaf(hostID string) (*LeafConnection, error) {
 	return conn, nil
 }
 
+// LeafInfo holds summary information about a connected leaf daemon.
+type LeafInfo struct {
+	HostID      string   `json:"host_id"`
+	Hostname    string   `json:"hostname"`
+	AllowedDirs []string `json:"allowed_dirs"`
+}
+
 // ListLeaves returns all connected leaf IDs.
 func (m *Manager) ListLeaves() []string {
 	m.mu.RLock()
@@ -96,16 +103,20 @@ func (m *Manager) ListLeaves() []string {
 	return ids
 }
 
-// DefaultLeaf returns the first available leaf. Useful when the agent
-// doesn't specify a particular host.
-func (m *Manager) DefaultLeaf() (*LeafConnection, error) {
+// ListConnectedLeaves returns summary information for all connected leaf daemons.
+func (m *Manager) ListConnectedLeaves() []LeafInfo {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	infos := make([]LeafInfo, 0, len(m.leaves))
 	for _, conn := range m.leaves {
-		return conn, nil
+		infos = append(infos, LeafInfo{
+			HostID:      conn.HostID,
+			Hostname:    conn.Hostname,
+			AllowedDirs: conn.AllowedDirs,
+		})
 	}
-	return nil, fmt.Errorf("no leaf daemons connected")
+	return infos
 }
 
 // SendCommand sends a command to a leaf and registers a pending response.
@@ -139,15 +150,14 @@ func (m *Manager) SendCommand(ctx context.Context, hostID string, req *ivyv1.Exe
 }
 
 // SendCommandAndWait sends a command to a leaf and waits for the response.
+// hostID must be non-empty — use the list_parser_hosts tool to discover available hosts.
 // This is the main interface used by parser host tools.
 func (m *Manager) SendCommandAndWait(ctx context.Context, hostID string, req *ivyv1.ExecuteCommandRequest) (*ivyv1.CommandOutput, error) {
-	// Resolve host (empty = default)
-	conn, err := m.ResolveHost(hostID)
-	if err != nil {
-		return nil, err
+	if hostID == "" {
+		return nil, fmt.Errorf("host_id is required: no default leaf host")
 	}
 
-	pending, err := m.SendCommand(ctx, conn.HostID, req)
+	pending, err := m.SendCommand(ctx, hostID, req)
 	if err != nil {
 		return nil, err
 	}
@@ -200,13 +210,4 @@ func (m *Manager) SendSyncRequest(ctx context.Context, hostID string, req *ivyv1
 		},
 	}
 	return conn.Stream.Send(vineCmd)
-}
-
-// ResolveHost resolves a host parameter to a leaf connection.
-// If host is empty, it returns the default leaf.
-func (m *Manager) ResolveHost(host string) (*LeafConnection, error) {
-	if host == "" {
-		return m.DefaultLeaf()
-	}
-	return m.GetLeaf(host)
 }

@@ -3,7 +3,10 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
+
+	"github.com/aspectrr/ivy/internal/ivyv1"
 )
 
 func TestRegistryRegisterAndGet(t *testing.T) {
@@ -134,6 +137,7 @@ func TestRegisterParserTools(t *testing.T) {
 	expected := []string{
 		"parser_grep", "parser_awk", "parser_find", "parser_cat",
 		"parser_read_file", "parser_tail", "parser_systemctl_status", "parser_journalctl",
+		"list_parser_hosts",
 	}
 	for _, name := range expected {
 		if _, err := reg.Get(name); err != nil {
@@ -155,8 +159,8 @@ func TestRegisterAllTools(t *testing.T) {
 	}
 
 	defs := reg.List()
-	if len(defs) != 14 { // 3 sandbox + 3 search + 8 parser
-		t.Fatalf("expected 14 total tools, got %d", len(defs))
+	if len(defs) != 15 { // 3 sandbox + 3 search + 8 parser + 1 leaf_hosts
+		t.Fatalf("expected 15 total tools, got %d", len(defs))
 	}
 }
 
@@ -197,6 +201,75 @@ func TestSearchToolsDefaultLimit(t *testing.T) {
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
+}
+
+func TestListParserHostsTool(t *testing.T) {
+	reg := NewRegistry()
+	mockLeaf := &mockLeafManager{
+		hosts: []LeafHostInfo{
+			{HostID: "host-001", Hostname: "parser-01", AllowedDirs: []string{"/etc/logstash"}},
+			{HostID: "host-002", Hostname: "parser-02", AllowedDirs: []string{"/etc/logstash", "/var/log"}},
+		},
+	}
+	if err := RegisterParserTools(reg, mockLeaf); err != nil {
+		t.Fatalf("RegisterParserTools: %v", err)
+	}
+
+	result, err := reg.Execute(context.Background(), "list_parser_hosts", json.RawMessage(`{}`), ToolContext{})
+	if err != nil {
+		t.Fatalf("Execute list_parser_hosts: %v", err)
+	}
+
+	var output map[string]interface{}
+	if err := json.Unmarshal(result, &output); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	count := int(output["count"].(float64))
+	if count != 2 {
+		t.Fatalf("expected 2 hosts, got %d", count)
+	}
+
+	hosts, ok := output["hosts"].([]interface{})
+	if !ok {
+		t.Fatal("expected hosts array")
+	}
+	if len(hosts) != 2 {
+		t.Fatalf("expected 2 hosts, got %d", len(hosts))
+	}
+
+	first := hosts[0].(map[string]interface{})
+	if first["host_id"] != "host-001" {
+		t.Fatalf("expected host_id=host-001, got %v", first["host_id"])
+	}
+	if first["hostname"] != "parser-01" {
+		t.Fatalf("expected hostname=parser-01, got %v", first["hostname"])
+	}
+}
+
+func TestListParserHostsToolNoManager(t *testing.T) {
+	reg := NewRegistry()
+	if err := RegisterParserTools(reg, nil); err != nil {
+		t.Fatalf("RegisterParserTools: %v", err)
+	}
+
+	_, err := reg.Execute(context.Background(), "list_parser_hosts", json.RawMessage(`{}`), ToolContext{})
+	if err == nil {
+		t.Fatal("expected error when no leaf manager configured")
+	}
+}
+
+// mockLeafManager satisfies the LeafManager interface for testing.
+type mockLeafManager struct {
+	hosts []LeafHostInfo
+}
+
+func (m *mockLeafManager) SendCommandAndWait(_ context.Context, _ string, _ *ivyv1.ExecuteCommandRequest) (*ivyv1.CommandOutput, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (m *mockLeafManager) ListConnectedLeaves() []LeafHostInfo {
+	return m.hosts
 }
 
 func TestSandboxToolsWithoutSandbox(t *testing.T) {
