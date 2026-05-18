@@ -49,8 +49,8 @@ type OAuthApp struct {
 // client_id and client_secret from https://app.clickup.com/settings/apps
 func DefaultOAuthApp() OAuthApp {
 	return OAuthApp{
-		ClientID:     envOr("IVY_CLICKUP_CLIENT_ID", ""),  // TODO: set default client_id
-		ClientSecret: envOr("IVY_CLICKUP_CLIENT_SECRET", ""), // TODO: set default client_secret
+		ClientID:     envOr("IVY_CLICKUP_CLIENT_ID", "Q17QDZIXAWQHPL3WAHWHMTCWQPZRBB8R"),                                     // TODO: set default client_id
+		ClientSecret: envOr("IVY_CLICKUP_CLIENT_SECRET", "JWR2YMMSHJ6GPRSKY2IAGKRJH6WN8K90LLAPSN7D987GPIWMFOXOZAZ0N9947B0J"), // TODO: set default client_secret
 	}
 }
 
