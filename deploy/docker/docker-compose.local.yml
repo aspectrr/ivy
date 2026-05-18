@@ -1,0 +1,101 @@
+# ── Ivy Local Testing Environment ───────────────────────────────
+# Boots the full Ivy stack locally for testing without VMs:
+#   - PostgreSQL + pgvector (session/event store)
+#   - Vine daemon (main orchestrator, manages sandboxes)
+#   - Leaf daemon (simulates a log parser host)
+#
+# Prerequisites:
+#   1. Build images:     make docker-local-build
+#   2. Start everything: make docker-local
+#   3. Stop everything:  make docker-local-down
+#
+# Or manually:
+#   docker compose -f deploy/docker/docker-compose.local.yml up -d
+#
+# Vine exposes gRPC on :50051 and HTTP on :8080 (health, webhooks).
+# Leaf connects to Vine internally — no exposed ports needed.
+# Vine mounts the Docker socket so it can create agent/pipeline sandboxes
+# as sibling containers on the host Docker daemon.
+#
+# All config lives in the YAML files mounted from deploy/docker/configs/.
+# Only secrets and quick-swap values are passed via environment variables:
+#   IVY_LLM_API_KEY          — API key (required)
+#   IVY_LLM_ENDPOINT         — Override LLM endpoint, e.g. https://openrouter.ai/api/v1
+#   IVY_LLM_MODEL            — Override model, e.g. anthropic/claude-sonnet-4
+#   IVY_CLICKUP_API_TOKEN    — ClickUp API token (optional)
+#   IVY_CLICKUP_TEAM_ID      — ClickUp team ID (optional)
+
+services:
+  # ── PostgreSQL + pgvector ──────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: ivy-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ivy
+      POSTGRES_USER: ivy
+      POSTGRES_PASSWORD: ivy
+    volumes:
+      - ivy-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ivy"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - ivy
+
+  # ── Vine Daemon ────────────────────────────────────────────
+  vine:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/vine.Dockerfile
+    container_name: ivy-vine
+    ports:
+      - "50051:50051" # gRPC (leaf connections)
+      - "8081:8080" # HTTP (health, webhooks)
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      IVY_LLM_API_KEY: ${IVY_LLM_API_KEY:-}
+      IVY_LLM_ENDPOINT: ${IVY_LLM_ENDPOINT:-}
+      IVY_LLM_MODEL: ${IVY_LLM_MODEL:-}
+      IVY_CLICKUP_API_TOKEN: ${IVY_CLICKUP_API_TOKEN:-}
+      IVY_CLICKUP_TEAM_ID: ${IVY_CLICKUP_TEAM_ID:-}
+    volumes:
+      # Mount Docker socket for sibling container management.
+      # Vine creates agent sandboxes and pipeline sandboxes on the host daemon.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Local config points DB at postgres service on Docker network
+      - ./configs/vine-local.yaml:/etc/ivy/config.yaml:ro
+    networks:
+      - ivy
+
+  # ── Leaf Daemon ────────────────────────────────────────────
+  # Simulates a log parser host. Mounts test fixtures as the
+  # Logstash config/log directories that Leaf reads from.
+  leaf:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/leaf.Dockerfile
+    container_name: ivy-leaf
+    depends_on:
+      - vine
+    volumes:
+      # Config already points at vine:50051
+      - ./configs/leaf-local.yaml:/etc/ivy-leaf/config.yaml:ro
+      # Test fixtures mounted as the directories Leaf is allowed to read
+      - ../../test-fixtures/logstash-config:/etc/logstash:ro
+      - ../../test-fixtures/logstash-logs:/var/log/logstash:ro
+    networks:
+      - ivy
+
+networks:
+  ivy:
+    name: ivy-local
+    driver: bridge
+
+volumes:
+  ivy-pgdata:

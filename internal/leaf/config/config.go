@@ -42,5 +42,10 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("parsing config file: %w", err)
 	}
 
+	// Override with environment variables
+	if v := os.Getenv("IVY_VINE_ADDRESS"); v != "" {
+		cfg.Vine.Address = v
+	}
+
 	return cfg, nil
 }

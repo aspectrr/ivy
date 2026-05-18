@@ -276,7 +276,7 @@ func TestContextBuilderTruncation(t *testing.T) {
 	}
 
 	// Token estimate should be within budget.
-	tokens := cb.estimateTokens(messages)
+	tokens := cb.EstimateTokens(messages)
 	if tokens > cb.maxTokens+100 { // small buffer for estimation error
 		t.Fatalf("estimated tokens %d exceeds budget %d", tokens, cb.maxTokens)
 	}

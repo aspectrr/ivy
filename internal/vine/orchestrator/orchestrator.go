@@ -23,6 +23,7 @@ type Orchestrator struct {
 	events       *eventstore.Store
 	llm          *LLMClient
 	ctxBuilder   *ContextBuilder
+	compactor    *Compactor
 	toolExecutor ToolExecutor
 	logger       *slog.Logger
 }
@@ -41,6 +42,7 @@ func New(
 		llm:          llm,
 		toolExecutor: toolExecutor,
 		ctxBuilder:   NewContextBuilder(),
+		compactor:    NewCompactor(events, llm, NewContextBuilder(), logger),
 		logger:       logger,
 	}
 }
@@ -179,6 +181,32 @@ func (o *Orchestrator) runLoop(ctx context.Context, sessionID string) {
 		}
 
 		messages := o.ctxBuilder.Build(events)
+
+		// Check if context needs compaction before calling the LLM.
+		if o.compactor.NeedsCompaction(messages) {
+			logger.Info("context approaching limit, triggering compaction",
+				"estimated_tokens", o.ctxBuilder.EstimateTokens(messages),
+				"max_tokens", o.ctxBuilder.MaxTokens(),
+			)
+			tokensSaved, err := o.compactor.Compact(ctx, sessionID, events)
+			if err != nil {
+				logger.Error("compaction failed", "error", err)
+				// Don't terminate — just continue with the truncated context.
+			} else if tokensSaved > 0 {
+				// Re-fetch events and rebuild context after compaction.
+				events, err = o.events.GetEvents(ctx, sessionID, 0, 10000)
+				if err != nil {
+					logger.Error("failed to get events after compaction", "error", err)
+					_ = o.Terminate(ctx, sessionID, true)
+					return
+				}
+				messages = o.ctxBuilder.Build(events)
+				logger.Info("context compacted, rebuilt messages",
+					"estimated_tokens", o.ctxBuilder.EstimateTokens(messages),
+					"tokens_saved", tokensSaved,
+				)
+			}
+		}
 
 		// Call the LLM.
 		resp, err := o.llm.Chat(ctx, ChatRequest{

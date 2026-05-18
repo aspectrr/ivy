@@ -66,8 +66,15 @@ func (cb *ContextBuilder) SetSkills(skills []string) {
 	cb.skills = skills
 }
 
+// MaxTokens returns the configured max token limit.
+func (cb *ContextBuilder) MaxTokens() int {
+	return cb.maxTokens
+}
+
 // Build constructs the chat messages from session events.
-// It builds from newest to oldest and truncates if the context window is exceeded.
+// If a compacted event exists, it uses the summary as context and only converts
+// events after the compaction point. Otherwise, converts all events and truncates
+// if the context window is exceeded.
 func (cb *ContextBuilder) Build(events []model.Event) []ChatMessage {
 	var messages []ChatMessage
 
@@ -76,10 +83,29 @@ func (cb *ContextBuilder) Build(events []model.Event) []ChatMessage {
 	if len(cb.skills) > 0 {
 		systemContent += "\n\n## Relevant Skills\n\n" + strings.Join(cb.skills, "\n\n---\n\n")
 	}
+
+	// Find the most recent compacted event.
+	var latestCompacted *model.CompactedPayload
+	var startIdx int
+	for i, evt := range events {
+		if evt.Type == model.EventTypeCompacted {
+			var p model.CompactedPayload
+			if err := json.Unmarshal(evt.Data, &p); err == nil {
+				latestCompacted = &p
+				startIdx = i + 1
+			}
+		}
+	}
+
+	// If we have a compacted summary, inject it after the system prompt.
+	if latestCompacted != nil {
+		systemContent += "\n\n## Previous Conversation Summary\n\n" + latestCompacted.Summary
+	}
+
 	messages = append(messages, ChatMessage{Role: "system", Content: systemContent})
 
-	// Convert events to messages.
-	for _, evt := range events {
+	// Convert events after the compaction point.
+	for _, evt := range events[startIdx:] {
 		msgs := cb.eventToMessages(evt)
 		messages = append(messages, msgs...)
 	}
@@ -177,6 +203,11 @@ func (cb *ContextBuilder) eventToMessages(evt model.Event) []ChatMessage {
 			},
 		}
 
+	case model.EventTypeCompacted:
+		// Compacted events are handled by Build() directly (injected into system prompt).
+		// They don't produce individual messages.
+		return nil
+
 	default:
 		return nil
 	}
@@ -192,15 +223,15 @@ func (cb *ContextBuilder) truncate(messages []ChatMessage) []ChatMessage {
 	system := messages[0]
 	rest := messages[1:]
 
-	for cb.estimateTokens(append([]ChatMessage{system}, rest...)) > cb.maxTokens && len(rest) > 1 {
+	for cb.EstimateTokens(append([]ChatMessage{system}, rest...)) > cb.maxTokens && len(rest) > 1 {
 		rest = rest[1:]
 	}
 
 	return append([]ChatMessage{system}, rest...)
 }
 
-// estimateTokens gives a rough token count for the messages.
-func (cb *ContextBuilder) estimateTokens(messages []ChatMessage) int {
+// EstimateTokens gives a rough token count for the messages.
+func (cb *ContextBuilder) EstimateTokens(messages []ChatMessage) int {
 	total := 0
 	for _, m := range messages {
 		total += len(m.Content) / charsPerToken

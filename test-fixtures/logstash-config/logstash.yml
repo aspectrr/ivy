@@ -1,0 +1,30 @@
+# Logstash-level settings for the test fixture
+
+path.data: /var/lib/logstash
+path.logs: /var/log/logstash
+
+pipeline.workers: 2
+pipeline.batch.size: 125
+pipeline.batch.delay: 50
+
+# Slow log threshold — useful for agents to diagnose performance
+slowlog.threshold.warn: 2s
+slowlog.threshold.info: 1s
+
+log.level: info
+log.format: json
+
+# Queue settings
+queue.type: persisted
+path.queue: /var/lib/logstash/queue
+queue.page_capacity: 250mb
+queue.max_events: 0
+queue.max_bytes: 1gb
+queue.checkpoint.acks: 1024
+queue.checkpoint.writes: 1024
+queue.checkpoint.interval: 1000
+
+# Dead letter queue
+dead_letter_queue.enable: true
+dead_letter_queue.max_bytes: 256mb
+path.dead_letter_queue: /var/lib/logstash/dead_letter_queue

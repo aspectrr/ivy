@@ -1,4 +1,6 @@
-# vine — Main daemon configuration
+# vine — local Docker testing config
+# Database points at the postgres service on the Docker network.
+# Sensitive values overridden via environment variables.
 
 server:
   grpc_port: 50051
@@ -9,11 +11,11 @@ server:
     ca: ""
 
 database:
-  host: localhost
+  host: postgres
   port: 5432
   name: ivy
   user: ivy
-  password: "" # Set via IVY_DB_PASSWORD env var
+  password: "ivy"
   sslmode: disable
 
 llm:
@@ -21,7 +23,7 @@ llm:
   api_key: "" # Set via IVY_LLM_API_KEY env var
   default_model: "gpt-4o"
   embedding_model: "text-embedding-ada-002"
-  embedding_dim: 1536 # Must match embedding model output (OpenAI=1536, nomic-embed-text=768)
+  embedding_dim: 1536
 
 sandbox:
   docker_host: "unix:///var/run/docker.sock"
@@ -37,11 +39,10 @@ connectors:
     enabled: false
     api_token: "" # Set via IVY_CLICKUP_API_TOKEN env var
     team_id: "" # Set via IVY_CLICKUP_TEAM_ID env var
-    list_id: "" # Restrict to a specific list (optional)
-    space_id: "" # Restrict to a specific space (optional)
-    tag: "" # Only process tasks with this tag (optional)
-    assignee: "" # Only process tasks assigned to this user ID (optional)
+    list_id: ""
+    space_id: ""
+    tag: ""
+    assignee: ""
     poll_interval: "30s"
-    proxy: "" # HTTP proxy URL, e.g. http://proxy.corp.internal:3128 (optional)
-    webhook_secret: "" # Set via IVY_CLICKUP_WEBHOOK_SECRET env var
-    agent_username: "" # ClickUp username for @mention detection (e.g. "ivy-agent"). Set via IVY_CLICKUP_AGENT_USERNAME env var
+    proxy: ""
+    webhook_secret: ""

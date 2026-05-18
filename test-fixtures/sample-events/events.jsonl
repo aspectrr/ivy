@@ -1,0 +1,13 @@
+{"timestamp":"2025-05-17T10:15:30.001Z","service":"webapp","level":"INFO","method":"GET","path":"/api/v1/users","status":200,"duration_ms":45.2,"client_ip":"10.0.1.50","user_id":"usr_abc123","request_id":"req_001"}
+{"timestamp":"2025-05-17T10:15:30.050Z","service":"webapp","level":"INFO","method":"GET","path":"/api/v1/users/usr_abc123","status":200,"duration_ms":23.1,"client_ip":"10.0.1.50","user_id":"usr_abc123","request_id":"req_002"}
+{"timestamp":"2025-05-17T10:15:30.120Z","service":"webapp","level":"ERROR","method":"POST","path":"/api/v1/orders","status":500,"duration_ms":1230.5,"client_ip":"10.0.2.100","user_id":"usr_def456","request_id":"req_003","error":"database connection timeout","stacktrace":"at OrderService.create(OrderService.java:142)\nat ApiController.handle(ApiController.java:89)"}
+{"timestamp":"2025-05-17T10:15:30.200Z","service":"webapp","level":"WARN","method":"GET","path":"/api/v1/inventory/item/sku-99999","status":404,"duration_ms":12.3,"client_ip":"10.0.3.75","user_id":"usr_ghi789","request_id":"req_004","error":"Item not found"}
+{"timestamp":"2025-05-17T10:15:30.250Z","service":"webapp","level":"INFO","method":"GET","path":"/health","status":200,"duration_ms":1.2,"client_ip":"10.0.0.1","request_id":"req_005"}
+{"timestamp":"2025-05-17T10:15:31.001Z","service":"api-gateway","level":"INFO","message":"10.0.1.50 GET /api/v1/users 200 45.2ms"}
+{"timestamp":"2025-05-17T10:15:31.002Z","service":"api-gateway","level":"INFO","message":"10.0.2.100 POST /api/v1/orders 500 1230.5ms"}
+{"timestamp":"2025-05-17T10:15:31.003Z","service":"api-gateway","level":"INFO","message":"10.0.3.75 GET /api/v1/inventory/item/sku-99999 404 12.3ms"}
+{"timestamp":"2025-05-17T10:15:31.004Z","service":"api-gateway","level":"WARN","message":"10.0.3.75 GET /api/v1/inventory/item/sku-99999 404 12.3ms extra_field"}
+{"timestamp":"2025-05-17T10:15:32.001Z","service":"auth-service","event_type":"login","client_ip":"10.0.1.50","user_id":"usr_abc123","status":"success","mfa_used":true}
+{"timestamp":"2025-05-17T10:15:32.500Z","service":"auth-service","event_type":"login","client_ip":"10.0.4.200","user_id":"usr_unknown","status":"failed","reason":"invalid_credentials","mfa_used":false}
+{"timestamp":"2025-05-17T10:15:33.001Z","service":"auth-service","event_type":"token_refresh","client_ip":"10.0.1.50","user_id":"usr_abc123","status":"success"}
+{"timestamp":"2025-05-17T10:15:33.500Z","service":"auth-service","event_type":"login","client_ip":"10.0.4.200","user_id":"usr_unknown","status":"failed","reason":"account_locked","tags":["security_event","brute_force_attempt"]}

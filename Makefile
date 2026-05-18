@@ -9,7 +9,7 @@ MAIN_LEAF     := ./cmd/leaf
 PROTO_DIR     := proto
 PROTO_OUT     := internal/ivyv1
 
-.PHONY: all build build-vine build-leaf test test-e2e test-integration lint proto-gen migrate-up migrate-down docker-build clean tidy
+.PHONY: all build build-vine build-leaf test test-e2e test-integration lint proto-gen migrate-up migrate-down docker-build docker-local-build docker-local docker-local-down docker-local-logs clean tidy
 
 all: build
 
@@ -62,12 +62,40 @@ migrate-down:
 migrate-create:
 	$(GO) run github.com/pressly/goose/v3/cmd/goose@latest -dir migrations create $(name) sql
 
-## docker-build: Build all Docker images
+## docker-build: Build all Docker images (agent-sandbox + pipeline)
 docker-build:
 	@echo "Building agent-sandbox image..."
 	docker build -f deploy/docker/agent-sandbox.Dockerfile -t ivy-agent-sandbox:latest .
 	@echo "Building pipeline-sandbox images..."
 	docker compose -f deploy/docker/pipeline-sandbox-compose.yml build
+
+## docker-local-build: Build images for local testing (vine + leaf + sandbox images)
+docker-local-build: docker-build
+	@echo "Building vine image..."
+	docker build -f deploy/docker/vine.Dockerfile -t ivy-vine:latest .
+	@echo "Building leaf image..."
+	docker build -f deploy/docker/leaf.Dockerfile -t ivy-leaf:latest .
+	@echo "All local images built."
+
+## docker-local: Start the full local testing stack
+docker-local:
+	docker compose -f deploy/docker/docker-compose.local.yml up -d
+	@echo ""
+	@echo "Ivy local stack is running."
+	@echo "  Vine gRPC:  localhost:50051"
+	@echo "  Vine HTTP:  localhost:8080"
+	@echo "  PostgreSQL: localhost:5432"
+	@echo ""
+	@echo "Check status: make docker-local-logs"
+	@echo "Stop:         make docker-local-down"
+
+## docker-local-down: Stop the local testing stack
+docker-local-down:
+	docker compose -f deploy/docker/docker-compose.local.yml down
+
+## docker-local-logs: Tail logs from the local stack
+docker-local-logs:
+	docker compose -f deploy/docker/docker-compose.local.yml logs -f
 
 ## clean: Remove build artifacts
 clean:

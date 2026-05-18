@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -199,11 +200,12 @@ func main() {
 			os.Exit(1)
 		}
 
-		clickupPoller = clickup.NewPoller(clickupClient, cfg.Connectors.ClickUp, func(task clickup.Task, isNew bool) {
+		clickupPoller = clickup.NewPoller(clickupClient, cfg.Connectors.ClickUp, func(task clickup.Task, isNew bool, reason clickup.TriggerReason, mention *clickup.MentionInfo) {
 			sourceID := task.ID
 			slog.Info("clickup task event",
 				"task_id", sourceID,
 				"is_new", isNew,
+				"reason", reason,
 				"name", task.Name,
 			)
 
@@ -252,72 +254,169 @@ func main() {
 					"session_id", sess.ID,
 					"task_id", sourceID,
 				)
-			} else {
-				// Task was updated — try to resume an existing session.
+				return
+			}
+
+			// Handle mentions — create a new session or append to existing.
+			if reason == clickup.ReasonMentioned && mention != nil {
+				// Fetch comments for full context.
+				comments, _ := clickupClient.GetComments(ctx, sourceID)
+				var commentsContext string
+				if len(comments) > 0 {
+					var sb strings.Builder
+					sb.WriteString("\n\n--- Comments ---\n")
+					for _, c := range comments {
+						fmt.Fprintf(&sb, "[%s]: %s\n", c.User.Username, c.CommentText)
+					}
+					commentsContext = sb.String()
+				}
+
 				sess, err := sessions.GetBySource(ctx, "clickup", sourceID)
-				if err != nil {
-					slog.Error("failed to lookup session for updated clickup task",
+				if err != nil || sess == nil {
+					// No existing session — create a new one with full context.
+					sess, err = sessions.Create(ctx, "clickup", sourceID, json.RawMessage(`{}`))
+					if err != nil {
+						slog.Error("failed to create session for mentioned clickup task",
+							"task_id", sourceID,
+							"error", err,
+						)
+						return
+					}
+
+					description := task.Description
+					if description == "" {
+						description = "(no description)"
+					}
+
+					mentionContext := fmt.Sprintf("[ClickUp Task: %s — %s mentioned the agent]\nURL: %s\nStatus: %s\n\n%s%s",
+						task.Name, mention.Author, task.URL, task.Status.Status, description, commentsContext)
+
+					if _, err := events.Append(ctx, sess.ID, model.EventTypeUserMessage, mustJSON(model.UserMessagePayload{
+						Content: mentionContext,
+					})); err != nil {
+						slog.Error("failed to seed mention message for clickup session",
+							"session_id", sess.ID,
+							"error", err,
+						)
+						return
+					}
+
+					if err := orchestratorInst.StartRun(ctx, sess.ID); err != nil {
+						slog.Error("failed to start run for mentioned clickup task",
+							"session_id", sess.ID,
+							"error", err,
+						)
+						return
+					}
+					slog.Info("started agent run for mentioned clickup task",
+						"session_id", sess.ID,
 						"task_id", sourceID,
+						"mentioned_by", mention.Author,
+					)
+					return
+				}
+
+				// Existing session — append mention as a new user message.
+				mentionMsg := fmt.Sprintf("[%s mentioned the agent in ClickUp]\n\"%s\"",
+					mention.Author, mention.CommentText)
+
+				if _, err := events.Append(ctx, sess.ID, model.EventTypeUserMessage, mustJSON(model.UserMessagePayload{
+					Content: mentionMsg,
+				})); err != nil {
+					slog.Error("failed to append mention message to session",
+						"session_id", sess.ID,
 						"error", err,
 					)
 					return
 				}
 
-				if sess.Status == model.StatusRunning {
-					// Already running — append the update as a new user message
-					// so the agent loop picks it up on the next turn.
-					updateMsg := fmt.Sprintf("[ClickUp Task Updated: %s]\nStatus: %s\nURL: %s",
-						task.Name, task.Status.Status, task.URL)
-					if _, err := events.Append(ctx, sess.ID, model.EventTypeUserMessage, mustJSON(model.UserMessagePayload{
-						Content: updateMsg,
-					})); err != nil {
-						slog.Error("failed to append update message to running session",
-							"session_id", sess.ID,
-							"error", err,
-						)
-					}
-					slog.Info("appended update to running session",
-						"session_id", sess.ID,
-						"task_id", sourceID,
-					)
-					return
-				}
-
 				if sess.Status == model.StatusSuspended || sess.Status == model.StatusFailed {
-					// Resume the session with context about the task update.
-					updateMsg := fmt.Sprintf("[ClickUp Task Updated: %s]\nStatus: %s\nURL: %s\n\nResuming session due to task update.",
-						task.Name, task.Status.Status, task.URL)
-					if _, err := events.Append(ctx, sess.ID, model.EventTypeUserMessage, mustJSON(model.UserMessagePayload{
-						Content: updateMsg,
-					})); err != nil {
-						slog.Error("failed to append resume message to session",
-							"session_id", sess.ID,
-							"error", err,
-						)
-						return
-					}
-
 					if err := orchestratorInst.Resume(ctx, sess.ID); err != nil {
-						slog.Error("failed to resume session for updated clickup task",
+						slog.Error("failed to resume session for mentioned clickup task",
 							"session_id", sess.ID,
 							"error", err,
 						)
 						return
 					}
-					slog.Info("resumed session for updated clickup task",
+					slog.Info("resumed session for mentioned clickup task",
 						"session_id", sess.ID,
 						"task_id", sourceID,
 					)
-					return
 				}
+				return
+			}
 
-				// Session is completed or otherwise not resumable — log and skip.
-				slog.Info("skipping update for non-resumable session",
+			// Handle task updates (assigned or generic update).
+			sess, err := sessions.GetBySource(ctx, "clickup", sourceID)
+			if err != nil {
+				slog.Error("failed to lookup session for updated clickup task",
+					"task_id", sourceID,
+					"error", err,
+				)
+				return
+			}
+
+			if sess == nil {
+				slog.Info("no existing session for updated clickup task, skipping",
+					"task_id", sourceID,
+				)
+				return
+			}
+
+			if sess.Status == model.StatusRunning {
+				// Already running — append the update as a new user message
+				// so the agent loop picks it up on the next turn.
+				updateMsg := fmt.Sprintf("[ClickUp Task Updated: %s]\nStatus: %s\nURL: %s",
+					task.Name, task.Status.Status, task.URL)
+				if _, err := events.Append(ctx, sess.ID, model.EventTypeUserMessage, mustJSON(model.UserMessagePayload{
+					Content: updateMsg,
+				})); err != nil {
+					slog.Error("failed to append update message to running session",
+						"session_id", sess.ID,
+						"error", err,
+					)
+				}
+				slog.Info("appended update to running session",
 					"session_id", sess.ID,
 					"task_id", sourceID,
-					"status", sess.Status,
 				)
+				return
 			}
+
+			if sess.Status == model.StatusSuspended || sess.Status == model.StatusFailed {
+				// Resume the session with context about the task update.
+				updateMsg := fmt.Sprintf("[ClickUp Task Updated: %s]\nStatus: %s\nURL: %s\n\nResuming session due to task update.",
+					task.Name, task.Status.Status, task.URL)
+				if _, err := events.Append(ctx, sess.ID, model.EventTypeUserMessage, mustJSON(model.UserMessagePayload{
+					Content: updateMsg,
+				})); err != nil {
+					slog.Error("failed to append resume message to session",
+						"session_id", sess.ID,
+						"error", err,
+					)
+					return
+				}
+
+				if err := orchestratorInst.Resume(ctx, sess.ID); err != nil {
+					slog.Error("failed to resume session for updated clickup task",
+						"session_id", sess.ID,
+						"error", err,
+					)
+					return
+				}
+				slog.Info("resumed session for updated clickup task",
+					"session_id", sess.ID,
+					"task_id", sourceID,
+				)
+				return
+			}
+
+			// Session is completed or otherwise not resumable — log and skip.
+			slog.Info("skipping update for non-resumable session",
+				"session_id", sess.ID,
+				"task_id", sourceID,
+				"status", sess.Status,
+			)
 		}, logger)
 		clickupPoller.Start(ctx)
 		slog.Info("ClickUp poller started", "interval", cfg.Connectors.ClickUp.PollInterval)

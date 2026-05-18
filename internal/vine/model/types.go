@@ -23,6 +23,7 @@ const (
 	EventTypeInterrupt        = "interrupt"
 	EventTypeStatusTransition = "status_transition"
 	EventTypeError            = "error"
+	EventTypeCompacted        = "compacted" // context was compacted: older events replaced with summary
 )
 
 // Session represents a durable agent session.
@@ -94,4 +95,12 @@ type ErrorPayload struct {
 	Message     string `json:"message"`
 	StackTrace  string `json:"stack_trace,omitempty"`
 	Recoverable bool   `json:"recoverable"`
+}
+
+// CompactedPayload is the data for a compacted event.
+// It stores the summary of older conversation events that were compacted.
+type CompactedPayload struct {
+	Summary          string `json:"summary"`
+	CompactedUpToSeq int64  `json:"compacted_up_to_seq"` // seq number of last event included in the summary
+	TokensSaved      int    `json:"tokens_saved"`
 }

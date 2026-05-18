@@ -78,6 +78,7 @@ type ClickUpConfig struct {
 	PollInterval  time.Duration `yaml:"poll_interval"`
 	Proxy         string        `yaml:"proxy"`
 	WebhookSecret string        `yaml:"webhook_secret"`
+	AgentUsername string        `yaml:"agent_username"` // ClickUp username to detect @mentions in comments
 }
 
 // LoadHostdConfig loads the host daemon configuration from a YAML file.
@@ -94,11 +95,20 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	// Override with environment variables
+	if v := os.Getenv("IVY_DB_HOST"); v != "" {
+		cfg.Database.Host = v
+	}
 	if v := os.Getenv("IVY_DB_PASSWORD"); v != "" {
 		cfg.Database.Password = v
 	}
 	if v := os.Getenv("IVY_LLM_API_KEY"); v != "" {
 		cfg.LLM.APIKey = v
+	}
+	if v := os.Getenv("IVY_LLM_ENDPOINT"); v != "" {
+		cfg.LLM.Endpoint = v
+	}
+	if v := os.Getenv("IVY_LLM_MODEL"); v != "" {
+		cfg.LLM.DefaultModel = v
 	}
 	if v := os.Getenv("IVY_CLICKUP_WEBHOOK_SECRET"); v != "" {
 		cfg.Connectors.ClickUp.WebhookSecret = v
@@ -111,6 +121,9 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if v := os.Getenv("IVY_CLICKUP_PROXY"); v != "" {
 		cfg.Connectors.ClickUp.Proxy = v
+	}
+	if v := os.Getenv("IVY_CLICKUP_AGENT_USERNAME"); v != "" {
+		cfg.Connectors.ClickUp.AgentUsername = v
 	}
 	if v := os.Getenv("IVY_EMBEDDING_DIM"); v != "" {
 		var dim int
