@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -69,7 +70,8 @@ type ConnectorsConfig struct {
 
 type ClickUpConfig struct {
 	Enabled       bool          `yaml:"enabled"`
-	APIToken      string        `yaml:"api_token"`
+	AuthMode      string        `yaml:"auth_mode"` // "personal" (pk_ token) or "oauth" (bearer token). Default: auto-detected from token prefix.
+	APIToken      string        `yaml:"api_token"` // Personal token (pk_...) or OAuth access token
 	TeamID        string        `yaml:"team_id"`
 	ListID        string        `yaml:"list_id"`
 	SpaceID       string        `yaml:"space_id"`
@@ -79,6 +81,18 @@ type ClickUpConfig struct {
 	Proxy         string        `yaml:"proxy"`
 	WebhookSecret string        `yaml:"webhook_secret"`
 	AgentUsername string        `yaml:"agent_username"` // ClickUp username to detect @mentions in comments
+}
+
+// AuthModeResolved returns the effective auth mode, auto-detecting from the
+// token prefix if not explicitly set.
+func (c ClickUpConfig) AuthModeResolved() string {
+	if c.AuthMode != "" {
+		return c.AuthMode
+	}
+	if strings.HasPrefix(c.APIToken, "pk_") {
+		return "personal"
+	}
+	return "oauth"
 }
 
 // LoadHostdConfig loads the host daemon configuration from a YAML file.
@@ -124,6 +138,9 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if v := os.Getenv("IVY_CLICKUP_AGENT_USERNAME"); v != "" {
 		cfg.Connectors.ClickUp.AgentUsername = v
+	}
+	if v := os.Getenv("IVY_CLICKUP_AUTH_MODE"); v != "" {
+		cfg.Connectors.ClickUp.AuthMode = v
 	}
 	if v := os.Getenv("IVY_EMBEDDING_DIM"); v != "" {
 		var dim int

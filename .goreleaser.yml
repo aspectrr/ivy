@@ -81,17 +81,3 @@ release:
   github:
     owner: aspectrr
     name: ivy
-
-brews:
-  - name: ivy
-    repository:
-      owner: aspectrr
-      name: homebrew-tap
-    directory: Formula
-    homepage: "https://github.com/aspectrr/ivy"
-    description: "Managed data engineering agents"
-    install: |
-      bin.install "vine"
-      bin.install "leaf"
-    test: |
-      system "#{bin}/vine", "--help"

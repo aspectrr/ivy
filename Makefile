@@ -2,10 +2,12 @@
 
 BINARY_VINE   := bin/vine
 BINARY_LEAF   := bin/leaf
+BINARY_IVY    := bin/ivy
 GO            := go
 GOFLAGS       := -trimpath -ldflags="-s -w"
 MAIN_VINE     := ./cmd/vine
 MAIN_LEAF     := ./cmd/leaf
+MAIN_IVY      := ./cmd/ivy
 PROTO_DIR     := proto
 PROTO_OUT     := internal/ivyv1
 
@@ -14,7 +16,7 @@ PROTO_OUT     := internal/ivyv1
 all: build
 
 ## build: Generate proto and build all binaries
-build: proto-gen build-vine build-leaf
+build: proto-gen build-vine build-leaf build-ivy
 
 ## build-vine: Build the vine binary
 build-vine:
@@ -27,6 +29,12 @@ build-leaf:
 	@echo "Building leaf..."
 	@mkdir -p bin
 	$(GO) build $(GOFLAGS) -o $(BINARY_LEAF) $(MAIN_LEAF)
+
+## build-ivy: Build the ivy CLI binary
+build-ivy:
+	@echo "Building ivy CLI..."
+	@mkdir -p bin
+	$(GO) build $(GOFLAGS) -o $(BINARY_IVY) $(MAIN_IVY)
 
 ## test: Run all tests
 test:
