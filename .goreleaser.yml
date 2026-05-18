@@ -44,10 +44,11 @@ builds:
       - -X main.date={{.Date}}
 
 archives:
-  - id: default
+  - id: vine
+    builds: [vine]
     formats: [tar.gz]
     name_template: >-
-      {{ .ProjectName }}_
+      vine_
       {{- .Version }}_
       {{- .Os }}_
       {{- if eq .Arch "amd64" }}x86_64
@@ -55,8 +56,22 @@ archives:
       {{- else }}{{ .Arch }}{{ end }}
     files:
       - configs/vine.yaml
-      - configs/leaf.yaml
       - migrations/*
+      - README.md
+      - LICENSE
+
+  - id: leaf
+    builds: [leaf]
+    formats: [tar.gz]
+    name_template: >-
+      leaf_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "arm64" }}aarch64
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - configs/leaf.yaml
       - README.md
       - LICENSE
 
