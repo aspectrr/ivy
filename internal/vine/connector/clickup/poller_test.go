@@ -81,7 +81,7 @@ func TestPoller_DetectsMention(t *testing.T) {
 
 		// Return comments with @mention (new) and old comment
 		if contains(path, "/task/t1/comment") {
-			_, _ = fmt.Fprintf(w, `{"comments":[{"id":"c1","task_id":"t1","user":{"id":1,"username":"bob"},"comment_text":"hey @ivy-agent can you help?","date":"%d"},{"id":"c2","task_id":"t1","user":{"id":2,"username":"alice"},"comment_text":"old comment","date":"1699900000000"}]}`,
+			_, _ = fmt.Fprintf(w, `{"comments":[{"id":90000000000001,"task_id":0,"user":{"id":1,"username":"bob"},"comment_text":"hey @ivy-agent can you help?","date":"%d"},{"id":90000000000002,"task_id":0,"user":{"id":2,"username":"alice"},"comment_text":"old comment","date":"1699900000000"}]}`,
 				futureMs)
 			return
 		}
@@ -132,8 +132,8 @@ func TestPoller_DetectsMention(t *testing.T) {
 	if capturedMention.Author != "bob" {
 		t.Errorf("expected author bob, got %s", capturedMention.Author)
 	}
-	if capturedMention.CommentID != "c1" {
-		t.Errorf("expected comment c1, got %s", capturedMention.CommentID)
+	if capturedMention.CommentID != "90000000000001" {
+		t.Errorf("expected comment 90000000000001, got %s", capturedMention.CommentID)
 	}
 }
 
@@ -148,7 +148,7 @@ func TestPoller_IgnoresOldMentions(t *testing.T) {
 
 		// Comment is older than the poller start time
 		if contains(path, "/task/t1/comment") {
-			_, _ = fmt.Fprintf(w, `{"comments":[{"id":"c1","task_id":"t1","user":{"id":1,"username":"bob"},"comment_text":"@ivy-agent help","date":"1000000000000"}]}`)
+			_, _ = fmt.Fprintf(w, `{"comments":[{"id":90000000000001,"task_id":0,"user":{"id":1,"username":"bob"},"comment_text":"@ivy-agent help","date":"1000000000000"}]}`)
 			return
 		}
 

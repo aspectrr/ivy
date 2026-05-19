@@ -166,7 +166,7 @@ func TestClient_PostComment(t *testing.T) {
 			t.Errorf("expected comment_text='Found the issue', got %q", body["comment_text"])
 		}
 
-		_, _ = fmt.Fprintf(w, `{"id":"c1","task_id":"abc123","comment_text":"Found the issue","date":"1700003000000"}`)
+		_, _ = fmt.Fprintf(w, `{"id":90000000000001,"task_id":123,"comment_text":"Found the issue","date":"1700003000000"}`)
 	}))
 	defer server.Close()
 
@@ -401,7 +401,7 @@ func TestParseTimestamp(t *testing.T) {
 
 func TestClient_GetComments(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = fmt.Fprintf(w, `{"comments":[{"id":"c1","task_id":"abc123","comment_text":"First comment","date":"1700000000000"},{"id":"c2","task_id":"abc123","comment_text":"Second comment","date":"1700001000000"}]}`)
+		_, _ = fmt.Fprintf(w, `{"comments":[{"id":90000000000001,"task_id":123,"comment_text":"First comment","date":"1700000000000"},{"id":90000000000002,"task_id":123,"comment_text":"Second comment","date":"1700001000000"}]}`)
 	}))
 	defer server.Close()
 

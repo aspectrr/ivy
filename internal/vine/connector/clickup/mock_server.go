@@ -17,13 +17,13 @@ import (
 // MockServer is a fake ClickUp API server for local development and testing.
 // It simulates tasks, comments, threads, reactions, and replies.
 type MockServer struct {
-	mu      sync.RWMutex
-	server  *httptest.Server
-	logger  *slog.Logger
-	tasks   map[string]*Task
-	comments map[string][]Comment // taskID → comments
-	replies  map[string][]Comment // parentCommentID → replies
-	reactions map[string][]string // commentID → emoji list
+	mu        sync.RWMutex
+	server    *httptest.Server
+	logger    *slog.Logger
+	tasks     map[string]*Task
+	comments  map[string][]Comment // taskID → comments
+	replies   map[string][]Comment // parentCommentID → replies
+	reactions map[string][]string  // commentID → emoji list
 
 	nextCommentID int64
 }
@@ -31,11 +31,11 @@ type MockServer struct {
 // NewMockServer creates a mock ClickUp API server.
 func NewMockServer(logger *slog.Logger) *MockServer {
 	ms := &MockServer{
-		logger:       logger,
-		tasks:        make(map[string]*Task),
-		comments:     make(map[string][]Comment),
-		replies:      make(map[string][]Comment),
-		reactions:    make(map[string][]string),
+		logger:        logger,
+		tasks:         make(map[string]*Task),
+		comments:      make(map[string][]Comment),
+		replies:       make(map[string][]Comment),
+		reactions:     make(map[string][]string),
 		nextCommentID: 90000000000001,
 	}
 
