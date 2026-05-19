@@ -66,6 +66,20 @@ type SandboxConfig struct {
 
 type ConnectorsConfig struct {
 	ClickUp ClickUpConfig `yaml:"clickup"`
+	GitHub  GitHubConfig  `yaml:"github"`
+}
+
+// GitHubConfig holds configuration for the GitHub App integration.
+// The agent uses a GitHub App (server-to-server) to push branches,
+// open PRs, and comment — all attributed to app-name[bot].
+type GitHubConfig struct {
+	Enabled        bool   `yaml:"enabled"`
+	AppID          int64  `yaml:"app_id"`
+	PrivateKeyPath string `yaml:"private_key_path"` // Path to PEM file (alternative to PrivateKey)
+	PrivateKey     string `yaml:"private_key"`      // Raw PEM content (overrides PrivateKeyPath)
+	BaseURL        string `yaml:"base_url"`         // API base URL; defaults to https://api.github.com. For GHES: https://github.example.com/api/v3
+	BranchPrefix   string `yaml:"branch_prefix"`    // Required prefix for agent branches (default: "agent/")
+	ProtectedRefs  string `yaml:"protected_refs"`   // Comma-separated globs of protected refs (default: "main,master,release/*")
 }
 
 type ClickUpConfig struct {
@@ -156,6 +170,46 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if cfg.Connectors.ClickUp.AgentUsername == "" {
 		cfg.Connectors.ClickUp.AgentUsername = DefaultAgentUsername
+	}
+
+	// GitHub App configuration overrides.
+	if v := os.Getenv("IVY_GITHUB_ENABLED"); v != "" {
+		cfg.Connectors.GitHub.Enabled = strings.EqualFold(v, "true") || v == "1"
+	}
+	if v := os.Getenv("IVY_GITHUB_APP_ID"); v != "" {
+		var id int64
+		if _, err := fmt.Sscanf(v, "%d", &id); err == nil {
+			cfg.Connectors.GitHub.AppID = id
+		}
+	}
+	if v := os.Getenv("IVY_GITHUB_PRIVATE_KEY_PATH"); v != "" {
+		cfg.Connectors.GitHub.PrivateKeyPath = v
+	}
+	if v := os.Getenv("IVY_GITHUB_PRIVATE_KEY"); v != "" {
+		cfg.Connectors.GitHub.PrivateKey = v
+	}
+	if v := os.Getenv("IVY_GITHUB_BASE_URL"); v != "" {
+		cfg.Connectors.GitHub.BaseURL = v
+	}
+	if v := os.Getenv("IVY_GITHUB_BRANCH_PREFIX"); v != "" {
+		cfg.Connectors.GitHub.BranchPrefix = v
+	}
+	if v := os.Getenv("IVY_GITHUB_PROTECTED_REFS"); v != "" {
+		cfg.Connectors.GitHub.ProtectedRefs = v
+	}
+	if cfg.Connectors.GitHub.BranchPrefix == "" {
+		cfg.Connectors.GitHub.BranchPrefix = "agent/"
+	}
+	if cfg.Connectors.GitHub.ProtectedRefs == "" {
+		cfg.Connectors.GitHub.ProtectedRefs = "main,master,release/*"
+	}
+	// Resolve private key: if raw content is set, use it; otherwise read from file.
+	if cfg.Connectors.GitHub.PrivateKey == "" && cfg.Connectors.GitHub.PrivateKeyPath != "" {
+		keyData, err := os.ReadFile(cfg.Connectors.GitHub.PrivateKeyPath)
+		if err != nil {
+			return nil, fmt.Errorf("reading GitHub App private key from %s: %w", cfg.Connectors.GitHub.PrivateKeyPath, err)
+		}
+		cfg.Connectors.GitHub.PrivateKey = string(keyData)
 	}
 	if v := os.Getenv("IVY_CLICKUP_AUTH_MODE"); v != "" {
 		cfg.Connectors.ClickUp.AuthMode = v

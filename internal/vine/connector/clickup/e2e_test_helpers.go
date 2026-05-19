@@ -231,8 +231,8 @@ func (f *fakeLLMClient) Chat(_ context.Context, req orchestrator.ChatRequest) (*
 // fakeToolExecutor records tool calls and returns canned results.
 // For ClickUp tools, it delegates to the real mock ClickUp client.
 type fakeToolExecutor struct {
-	mu           sync.Mutex
-	calls        []toolCallRecord
+	mu            sync.Mutex
+	calls         []toolCallRecord
 	clickupClient *Client
 }
 
